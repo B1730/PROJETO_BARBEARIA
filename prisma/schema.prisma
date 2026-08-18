@@ -1,0 +1,147 @@
+// Schema do banco de dados - PostgreSQL (Supabase free tier)
+// Estratégia multi-tenant: um banco só, isolado por barbeariaId em cada tabela.
+// Isso é mais barato e simples de manter do que um banco por barbearia,
+// e na prática funciona igual: cada barbearia só enxerga seus próprios dados.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PapelUsuario {
+  CLIENTE
+  BARBEIRO
+  DONO
+}
+
+enum StatusAgendamento {
+  PENDENTE
+  CONFIRMADO
+  RECUSADO
+  CANCELADO
+  CONCLUIDO
+}
+
+// A "barbearia" é o tenant. Tudo que pertence a ela carrega barbeariaId.
+model Barbearia {
+  id            String   @id @default(cuid())
+  nome          String
+  slug          String   @unique // usado na URL: barbearia.com/minha-barbearia
+  telefone      String?
+  endereco      String?
+  criadoEm      DateTime @default(now())
+
+  usuarios      Usuario[]
+  servicos      Servico[]
+  agendamentos  Agendamento[]
+}
+
+// Um único model de usuário para os 3 papéis (cliente, barbeiro, dono).
+// Simplifica autenticação: um só fluxo de login pra todo mundo.
+model Usuario {
+  id            String        @id @default(cuid())
+  nome          String
+  email         String        @unique
+  senhaHash     String
+  telefone      String?
+  papel         PapelUsuario
+  criadoEm      DateTime      @default(now())
+
+  // Usado só por BARBEIRO, pra notificação de novo agendamento via
+  // CallMeBot (ver src/lib/whatsapp.ts). callmebotApiKey é a chave pessoal
+  // que o CallMeBot devolve depois que o barbeiro ativa o próprio número —
+  // não dá pra gerar isso do nosso lado, é o barbeiro quem ativa.
+  whatsapp        String?
+  callmebotApiKey String?
+
+  // Barbeiros e donos pertencem a uma barbearia. Clientes podem agendar em
+  // qualquer barbearia, então barbeariaId fica nulo para eles.
+  barbeariaId   String?
+  barbearia     Barbearia?    @relation(fields: [barbeariaId], references: [id])
+
+  // Relações específicas de barbeiro
+  disponibilidades   Disponibilidade[]
+  agendamentosComoBarbeiro Agendamento[] @relation("AgendamentosDoBarbeiro")
+  servicosQueRealiza  ServicoBarbeiro[]
+
+  // Relações específicas de cliente
+  agendamentosComoCliente  Agendamento[] @relation("AgendamentosDoCliente")
+
+  @@index([barbeariaId])
+}
+
+// Corte/serviço oferecido pela barbearia (nome e duração são da barbearia,
+// mas o preço final pode variar por barbeiro via ServicoBarbeiro).
+model Servico {
+  id            String   @id @default(cuid())
+  barbeariaId   String
+  barbearia     Barbearia @relation(fields: [barbeariaId], references: [id])
+  nome          String   // ex: "Corte degradê"
+  duracaoMinutos Int     @default(30)
+  precoBase     Decimal  @db.Decimal(10, 2)
+  ativo         Boolean  @default(true)
+
+  barbeiros     ServicoBarbeiro[]
+  agendamentos  Agendamento[]
+
+  @@index([barbeariaId])
+}
+
+// Tabela de ligação: quais barbeiros fazem qual serviço, e por qual preço
+// (permite cada barbeiro ter um preço próprio pro mesmo corte, se quiser).
+model ServicoBarbeiro {
+  id          String   @id @default(cuid())
+  servicoId   String
+  servico     Servico  @relation(fields: [servicoId], references: [id])
+  barbeiroId  String
+  barbeiro    Usuario  @relation(fields: [barbeiroId], references: [id])
+  preco       Decimal  @db.Decimal(10, 2)
+
+  @@unique([servicoId, barbeiroId])
+}
+
+// Janela de disponibilidade que o barbeiro cadastra (ex: toda segunda 9h-18h).
+// Os horários "livres" mostrados ao cliente são calculados a partir daqui,
+// subtraindo os agendamentos já confirmados/pendentes.
+model Disponibilidade {
+  id            String   @id @default(cuid())
+  barbeiroId    String
+  barbeiro      Usuario  @relation(fields: [barbeiroId], references: [id])
+  diaDaSemana   Int      // 0 = domingo ... 6 = sábado
+  horaInicio    String   // "09:00"
+  horaFim       String   // "18:00"
+
+  @@index([barbeiroId])
+}
+
+model Agendamento {
+  id            String            @id @default(cuid())
+  barbeariaId   String
+  barbearia     Barbearia         @relation(fields: [barbeariaId], references: [id])
+
+  clienteId     String
+  cliente       Usuario           @relation("AgendamentosDoCliente", fields: [clienteId], references: [id])
+
+  barbeiroId    String
+  barbeiro      Usuario           @relation("AgendamentosDoBarbeiro", fields: [barbeiroId], references: [id])
+
+  servicoId     String
+  servico       Servico           @relation(fields: [servicoId], references: [id])
+
+  data          DateTime          // data e hora de início do agendamento
+  precoCobrado  Decimal           @db.Decimal(10, 2) // "congela" o preço no momento do agendamento
+  status        StatusAgendamento @default(PENDENTE)
+
+  criadoEm      DateTime          @default(now())
+  atualizadoEm  DateTime          @updatedAt
+
+  @@index([barbeariaId, data])
+  // Trava de banco contra double-booking: garante que duas requisições
+  // concorrentes não consigam criar dois agendamentos pro mesmo barbeiro no
+  // mesmo instante, mesmo que ambas passem pela revalidação em memória.
+  @@unique([barbeiroId, data])
+}
