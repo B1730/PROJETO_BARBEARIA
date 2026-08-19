@@ -8,6 +8,7 @@ const schema = z.object({
   precoBase: z.number().positive().optional(),
   duracaoMinutos: z.number().int().positive().optional(),
   ativo: z.boolean().optional(),
+  imagemUrl: z.string().url().optional(),
 });
 
 async function garantirDono(id: string, barbeariaId: string) {

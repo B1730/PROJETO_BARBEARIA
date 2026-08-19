@@ -7,10 +7,22 @@ import { db } from "@/lib/db";
 export async function GET(_req: NextRequest, { params }: { params: { slug: string } }) {
   const barbearia = await db.barbearia.findUnique({
     where: { slug: params.slug },
-    include: {
+    // select explícito no nível raiz — sem isso, o id real da barbearia
+    // (e telefone/endereco) vazava pra qualquer visitante dessa rota
+    // pública. O id não é usado por nada no fluxo do cliente (o servidor
+    // sempre deriva a barbearia a partir do servicoId em
+    // POST /api/agendamentos, nunca aceita um barbeariaId vindo do body).
+    select: {
+      nome: true,
+      slug: true,
       servicos: {
         where: { ativo: true },
-        include: {
+        select: {
+          id: true,
+          nome: true,
+          precoBase: true,
+          duracaoMinutos: true,
+          imagemUrl: true,
           barbeiros: {
             select: { barbeiroId: true, preco: true, barbeiro: { select: { id: true, nome: true } } },
           },
@@ -18,7 +30,7 @@ export async function GET(_req: NextRequest, { params }: { params: { slug: strin
       },
       usuarios: {
         where: { papel: "BARBEIRO" },
-        select: { id: true, nome: true },
+        select: { id: true, nome: true, fotoUrl: true },
       },
     },
   });

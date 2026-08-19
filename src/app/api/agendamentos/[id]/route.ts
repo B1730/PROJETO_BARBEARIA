@@ -34,6 +34,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ erro: "Esse agendamento não pode mudar para esse status" }, { status: 409 });
   }
 
+  // CONCLUIDO entra na soma do financeiro (ver /api/financeiro) — não pode
+  // ser marcado antes do horário realmente acontecer, senão conta
+  // faturamento de um atendimento que ainda nem ocorreu.
+  if (dados.data.status === "CONCLUIDO" && agendamento.data > new Date()) {
+    return NextResponse.json({ erro: "Esse agendamento ainda não aconteceu" }, { status: 409 });
+  }
+
   const atualizado = await db.agendamento.update({
     where: { id: params.id },
     data: { status: dados.data.status },

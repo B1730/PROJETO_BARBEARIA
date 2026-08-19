@@ -7,6 +7,7 @@ const schema = z.object({
   nome: z.string().min(2),
   precoBase: z.number().positive(),
   duracaoMinutos: z.number().int().positive().default(30),
+  imagemUrl: z.string().url().optional(),
 });
 
 // GET: lista os serviços da barbearia do usuário logado (dono ou barbeiro)

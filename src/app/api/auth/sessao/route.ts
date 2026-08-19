@@ -12,7 +12,7 @@ export async function GET() {
 
   const usuario = await db.usuario.findUnique({
     where: { id: sessao.usuarioId },
-    select: { id: true, nome: true, papel: true },
+    select: { id: true, nome: true, papel: true, ehChefe: true },
   });
   if (!usuario) return NextResponse.json({ erro: "Não autenticado" }, { status: 401 });
 

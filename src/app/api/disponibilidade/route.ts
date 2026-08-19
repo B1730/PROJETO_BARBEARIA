@@ -1,21 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/lib/exigirSessao";
+import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
 
-const schema = z.object({
-  diaDaSemana: z.number().int().min(0).max(6),
-  horaInicio: z.string().regex(/^\d{2}:\d{2}$/),
-  horaFim: z.string().regex(/^\d{2}:\d{2}$/),
-});
+// "HH:MM" com hora 00-23 e minuto 00-59 — o regex sozinho deixava passar
+// algo como "25:99", que depois estourava silenciosamente no setUTCHours()
+// de src/lib/horarios.ts em vez de dar um erro claro pro barbeiro.
+const horaValida = (valor: string) => {
+  const [hora, minuto] = valor.split(":").map(Number);
+  return hora >= 0 && hora <= 23 && minuto >= 0 && minuto <= 59;
+};
 
-// GET: disponibilidade do barbeiro logado
-export async function GET() {
-  const sessao = await exigirSessao(["BARBEIRO"]);
+const schema = z
+  .object({
+    diaDaSemana: z.number().int().min(0).max(6),
+    horaInicio: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida"),
+    horaFim: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida"),
+  })
+  // Comparação de string funciona porque o formato é sempre "HH:MM" com
+  // zero à esquerda. Sem isso, uma janela invertida (ex.: início 18:00, fim
+  // 09:00) era aceita e virava silenciosamente zero horários livres, sem
+  // nenhum aviso pro barbeiro sobre o que está errado.
+  .refine((dados) => dados.horaInicio < dados.horaFim, {
+    message: "Hora de início precisa ser antes da hora de fim",
+    path: ["horaFim"],
+  });
+
+// GET: disponibilidade do barbeiro logado. Com ?barbeiroId=<outro>, o
+// dono ou o barbeiro chefe da barbearia consegue ver (só ver — não editar)
+// a disponibilidade de um colega, pra saber quando cada um trabalha.
+export async function GET(req: NextRequest) {
+  const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
+  const alvoId = req.nextUrl.searchParams.get("barbeiroId");
+  let barbeiroId: string;
+
+  if (!alvoId) {
+    if (sessao.papel !== "BARBEIRO") {
+      return NextResponse.json({ erro: "Informe o barbeiro (barbeiroId)" }, { status: 400 });
+    }
+    barbeiroId = sessao.usuarioId;
+  } else if (alvoId === sessao.usuarioId) {
+    barbeiroId = sessao.usuarioId;
+  } else {
+    if (!(await sessaoTemPrivilegioDeChefe(sessao))) {
+      return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
+    }
+    const alvo = await db.usuario.findUnique({ where: { id: alvoId } });
+    if (!alvo || alvo.papel !== "BARBEIRO" || alvo.barbeariaId !== sessao.barbeariaId) {
+      return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
+    }
+    barbeiroId = alvoId;
+  }
+
   const disponibilidades = await db.disponibilidade.findMany({
-    where: { barbeiroId: sessao.usuarioId },
+    where: { barbeiroId },
     orderBy: { diaDaSemana: "asc" },
   });
 

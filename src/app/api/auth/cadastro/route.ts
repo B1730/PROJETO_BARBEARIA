@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { criarHashSenha, criarSessao } from "@/lib/auth";
+import { gerarSlug } from "@/lib/slug";
 
+// Cadastro público só cria CLIENTE ou DONO (que cria a própria barbearia).
+// BARBEIRO nunca se autocadastra — só existe pelo caminho já protegido
+// POST /api/barbeiros (o dono logado cria e define a senha inicial). Um
+// papel: "BARBEIRO" aqui já existiu e permitia entrar em QUALQUER
+// barbearia existente só sabendo o id dela — e esse id é descoberto pela
+// rota pública GET /api/barbearias/[slug]. Ver CLAUDE.md.
 const schema = z.object({
   nome: z.string().min(2),
   email: z.string().email(),
   senha: z.string().min(6),
-  papel: z.enum(["CLIENTE", "BARBEIRO", "DONO"]),
-  // Obrigatório para DONO (cria a barbearia) e BARBEIRO (entra em uma existente)
-  nomeBarbearia: z.string().optional(),
-  barbeariaId: z.string().optional(),
+  papel: z.enum(["CLIENTE", "DONO"]),
+  nomeBarbearia: z.string().optional(), // obrigatório para DONO
 });
 
 export async function POST(req: NextRequest) {
@@ -19,58 +25,43 @@ export async function POST(req: NextRequest) {
   if (!dados.success) {
     return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   }
-  const { nome, email, senha, papel, nomeBarbearia, barbeariaId } = dados.data;
+  const { nome, email, senha, papel, nomeBarbearia } = dados.data;
 
-  const jaExiste = await db.usuario.findUnique({ where: { email } });
-  if (jaExiste) {
-    return NextResponse.json({ erro: "Este e-mail já está cadastrado" }, { status: 409 });
+  if (papel === "DONO" && !nomeBarbearia) {
+    return NextResponse.json({ erro: "Informe o nome da barbearia" }, { status: 400 });
   }
 
-  let barbeariaFinalId: string | null = null;
+  const senhaHash = await criarHashSenha(senha);
 
-  if (papel === "DONO") {
-    if (!nomeBarbearia) {
-      return NextResponse.json({ erro: "Informe o nome da barbearia" }, { status: 400 });
-    }
-    const slug = nomeBarbearia
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-
-    const barbearia = await db.barbearia.create({
-      data: { nome: nomeBarbearia, slug: `${slug}-${Date.now().toString(36)}` },
+  try {
+    // Barbearia + Usuario numa única transação: se o e-mail colidir com um
+    // cadastro concorrente, a transação inteira desfaz — sem isso, sobrava
+    // uma Barbearia órfã (criada, mas sem dono) toda vez que o segundo
+    // usuario.create falhava por e-mail duplicado.
+    const usuario = await db.$transaction(async (tx) => {
+      let barbeariaId: string | null = null;
+      if (papel === "DONO") {
+        const barbearia = await tx.barbearia.create({
+          data: { nome: nomeBarbearia!, slug: gerarSlug(nomeBarbearia!) },
+        });
+        barbeariaId = barbearia.id;
+      }
+      return tx.usuario.create({
+        data: { nome, email, senhaHash, papel, barbeariaId },
+      });
     });
-    barbeariaFinalId = barbearia.id;
-  }
 
-  if (papel === "BARBEIRO") {
-    if (!barbeariaId) {
-      return NextResponse.json({ erro: "Informe a barbearia" }, { status: 400 });
+    await criarSessao({
+      usuarioId: usuario.id,
+      papel: usuario.papel,
+      barbeariaId: usuario.barbeariaId,
+    });
+
+    return NextResponse.json({ ok: true, usuario: { id: usuario.id, nome: usuario.nome, papel: usuario.papel } });
+  } catch (erro) {
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
+      return NextResponse.json({ erro: "Este e-mail já está cadastrado" }, { status: 409 });
     }
-    const barbeariaExiste = await db.barbearia.findUnique({ where: { id: barbeariaId } });
-    if (!barbeariaExiste) {
-      return NextResponse.json({ erro: "Barbearia não encontrada" }, { status: 400 });
-    }
-    barbeariaFinalId = barbeariaId;
+    throw erro;
   }
-
-  const usuario = await db.usuario.create({
-    data: {
-      nome,
-      email,
-      senhaHash: await criarHashSenha(senha),
-      papel,
-      barbeariaId: barbeariaFinalId,
-    },
-  });
-
-  await criarSessao({
-    usuarioId: usuario.id,
-    papel: usuario.papel,
-    barbeariaId: usuario.barbeariaId,
-  });
-
-  return NextResponse.json({ ok: true, usuario: { id: usuario.id, nome: usuario.nome, papel: usuario.papel } });
 }

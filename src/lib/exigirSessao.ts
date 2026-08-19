@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { db } from "./db";
 import { pegarSessao, SessaoPayload } from "./auth";
 
 /**
@@ -17,4 +18,18 @@ export async function exigirSessao(
     return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
   }
   return sessao;
+}
+
+/**
+ * true pro DONO (acesso total já garantido) e pro BARBEIRO promovido a
+ * chefe (ver Usuario.ehChefe). Sempre confere direto no banco, nunca
+ * confia num campo salvo no cookie de sessão — assim uma promoção ou
+ * rebaixamento feito pelo dono tem efeito imediato, sem esperar o usuário
+ * deslogar/logar de novo.
+ */
+export async function sessaoTemPrivilegioDeChefe(sessao: SessaoPayload): Promise<boolean> {
+  if (sessao.papel === "DONO") return true;
+  if (sessao.papel !== "BARBEIRO") return false;
+  const usuario = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { ehChefe: true } });
+  return usuario?.ehChefe ?? false;
 }

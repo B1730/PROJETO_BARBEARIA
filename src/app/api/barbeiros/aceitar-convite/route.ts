@@ -1,0 +1,69 @@
+import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { criarHashSenha, criarSessao, lerTokenConviteBarbeiro } from "@/lib/auth";
+
+// GET /api/barbeiros/aceitar-convite?token=...
+// Só valida o token e devolve os dados pra tela mostrar antes de pedir a
+// senha — assim um convite inválido/expirado já aparece como erro claro,
+// em vez da pessoa só descobrir isso depois de preencher tudo.
+export async function GET(req: NextRequest) {
+  const token = req.nextUrl.searchParams.get("token");
+  if (!token) return NextResponse.json({ erro: "Convite inválido" }, { status: 400 });
+
+  const identidade = await lerTokenConviteBarbeiro(token);
+  if (!identidade) {
+    return NextResponse.json({ erro: "Convite expirado ou inválido — peça pra te convidarem de novo" }, { status: 400 });
+  }
+
+  const barbearia = await db.barbearia.findUnique({ where: { id: identidade.barbeariaId }, select: { nome: true } });
+  if (!barbearia) return NextResponse.json({ erro: "Convite inválido" }, { status: 400 });
+
+  return NextResponse.json({
+    nome: identidade.nome,
+    email: identidade.email,
+    barbeariaNome: barbearia.nome,
+    convidadoPorNome: identidade.convidadoPor,
+  });
+}
+
+const schema = z.object({
+  token: z.string(),
+  senha: z.string().min(6),
+});
+
+// POST: confirma o convite e cria a conta — só agora o Usuario passa a
+// existir. Revalida o token e reconfere o e-mail (corrida: alguém pode ter
+// se cadastrado com esse e-mail por outro caminho enquanto o convite
+// estava pendente), mesmo padrão de src/app/api/auth/google/finalizar/route.ts.
+export async function POST(req: NextRequest) {
+  const dados = schema.safeParse(await req.json());
+  if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
+
+  const identidade = await lerTokenConviteBarbeiro(dados.data.token);
+  if (!identidade) {
+    return NextResponse.json({ erro: "Convite expirado ou inválido — peça pra te convidarem de novo" }, { status: 400 });
+  }
+
+  try {
+    const usuario = await db.usuario.create({
+      data: {
+        nome: identidade.nome,
+        email: identidade.email,
+        senhaHash: await criarHashSenha(dados.data.senha),
+        papel: "BARBEIRO",
+        ehChefe: false,
+        barbeariaId: identidade.barbeariaId,
+      },
+    });
+
+    await criarSessao({ usuarioId: usuario.id, papel: usuario.papel, barbeariaId: usuario.barbeariaId });
+    return NextResponse.json({ ok: true });
+  } catch (erro) {
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
+      return NextResponse.json({ erro: "Este e-mail já está cadastrado — entre normalmente" }, { status: 409 });
+    }
+    throw erro;
+  }
+}

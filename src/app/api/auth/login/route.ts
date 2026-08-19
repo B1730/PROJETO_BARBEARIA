@@ -16,7 +16,10 @@ export async function POST(req: NextRequest) {
   }
 
   const usuario = await db.usuario.findUnique({ where: { email: dados.data.email } });
-  if (!usuario || !(await conferirSenha(dados.data.senha, usuario.senhaHash))) {
+  if (!usuario || !usuario.senhaHash) {
+    return NextResponse.json({ erro: "E-mail ou senha incorretos" }, { status: 401 });
+  }
+  if (!(await conferirSenha(dados.data.senha, usuario.senhaHash))) {
     return NextResponse.json({ erro: "E-mail ou senha incorretos" }, { status: 401 });
   }
 

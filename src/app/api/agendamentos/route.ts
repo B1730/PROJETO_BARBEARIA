@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma, StatusAgendamento } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/lib/exigirSessao";
-import { calcularHorariosLivres } from "@/lib/horarios";
+import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
+import { buscarAgendamentosOcupados, conflitaComOcupados } from "@/lib/horarios";
 import { notificarNovoAgendamento } from "@/lib/whatsapp";
 
 const schema = z.object({
@@ -12,6 +12,10 @@ const schema = z.object({
   data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // "2026-08-20"
   hora: z.string().regex(/^\d{2}:\d{2}$/), // "14:30"
 });
+
+// Usado só pra sinalizar, de dentro da transação abaixo, que o horário foi
+// tomado por outra requisição — nunca chega a sair da função POST.
+class HorarioIndisponivelError extends Error {}
 
 // POST: cliente solicita um agendamento. Fica como PENDENTE até o
 // barbeiro aceitar ou recusar — ninguém mais consegue pegar o mesmo
@@ -46,49 +50,81 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "Esse barbeiro não realiza esse serviço" }, { status: 400 });
   }
 
-  // Revalida que o horário ainda está livre (evita corrida entre dois clientes)
-  const livres = await calcularHorariosLivres({ barbeiroId, data, duracaoMinutos: servico.duracaoMinutos });
-  if (!livres.includes(hora)) {
-    return NextResponse.json({ erro: "Esse horário acabou de ficar indisponível" }, { status: 409 });
-  }
-
   const precoCobrado = servico.barbeiros[0]?.preco ?? servico.precoBase;
+  const inicio = new Date(`${data}T${hora}:00-03:00`);
+  const fim = new Date(inicio.getTime() + servico.duracaoMinutos * 60000);
 
+  // A checagem de horário livre e a criação do agendamento acontecem dentro
+  // da MESMA transação serializável — isso fecha uma corrida que uma
+  // checagem-depois-cria em dois passos separados não fecha: dois clientes
+  // pedindo, ao mesmo tempo, dois serviços de duração diferente pro mesmo
+  // barbeiro em horários que se sobrepõem (ex.: serviço de 90min às 10:00 e
+  // serviço de 30min às 10:30) têm início "diferente" — a constraint
+  // unique(barbeiroId, data) sozinha não pega esse caso, só o mesmo instante
+  // exato. Sob isolamento serializável, o Postgres detecta a sobreposição e
+  // uma das duas transações falha com erro de serialização (P2034).
+  let agendamento;
   try {
-    const agendamento = await db.agendamento.create({
-      data: {
-        barbeariaId: servico.barbeariaId,
-        clienteId: sessao.usuarioId,
-        barbeiroId,
-        servicoId,
-        data: new Date(`${data}T${hora}:00-03:00`),
-        precoCobrado,
-        status: "PENDENTE",
+    agendamento = await db.$transaction(
+      async (tx) => {
+        const ocupados = await buscarAgendamentosOcupados(tx, { barbeiroId, data });
+        if (conflitaComOcupados(inicio, fim, ocupados)) {
+          throw new HorarioIndisponivelError();
+        }
+        return tx.agendamento.create({
+          data: {
+            barbeariaId: servico.barbeariaId,
+            clienteId: sessao.usuarioId,
+            barbeiroId,
+            servicoId,
+            data: inicio,
+            duracaoMinutos: servico.duracaoMinutos,
+            precoCobrado,
+            status: "PENDENTE",
+          },
+        });
       },
-    });
-
-    if (barbeiro.whatsapp && barbeiro.callmebotApiKey) {
-      const cliente = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } });
-      const dataFormatada = data.split("-").reverse().join("/");
-      await notificarNovoAgendamento({
-        whatsapp: barbeiro.whatsapp,
-        apikey: barbeiro.callmebotApiKey,
-        mensagem: `Novo agendamento: ${cliente?.nome ?? "um cliente"} marcou ${servico.nome} para ${dataFormatada} às ${hora}. Entre no painel pra confirmar.`,
-      });
-    }
-
-    return NextResponse.json({ agendamento });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
   } catch (erro) {
-    // Constraint unique(barbeiroId, data) pega a corrida que a revalidação acima não fecha sozinha.
-    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
-      return NextResponse.json({ erro: "Esse horário acabou de ficar indisponível" }, { status: 409 });
+    const mesmaMensagem = { erro: "Esse horário acabou de ficar indisponível" };
+    if (erro instanceof HorarioIndisponivelError) {
+      return NextResponse.json(mesmaMensagem, { status: 409 });
+    }
+    // P2002: constraint unique(barbeiroId, data) — mesmo instante exato.
+    // P2034: conflito de serialização detectado pelo Postgres — instantes
+    // diferentes, mas intervalos sobrepostos.
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && (erro.code === "P2002" || erro.code === "P2034")) {
+      return NextResponse.json(mesmaMensagem, { status: 409 });
     }
     throw erro;
   }
+
+  if (barbeiro.whatsapp && barbeiro.callmebotApiKey) {
+    const cliente = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } });
+    const dataFormatada = data.split("-").reverse().join("/");
+    await notificarNovoAgendamento({
+      whatsapp: barbeiro.whatsapp,
+      apikey: barbeiro.callmebotApiKey,
+      mensagem: `Novo agendamento: ${cliente?.nome ?? "um cliente"} marcou ${servico.nome} para ${dataFormatada} às ${hora}. Entre no painel pra confirmar.`,
+    });
+  }
+
+  return NextResponse.json({
+    agendamento,
+    // Usado pela tela do cliente pra oferecer um link direto de WhatsApp
+    // com o barbeiro escolhido, além da notificação automática que já foi
+    // disparada acima.
+    barbeiro: { nome: barbeiro.nome, whatsapp: barbeiro.whatsapp },
+  });
 }
 
 // GET: lista agendamentos.
-// - BARBEIRO vê só os próprios
+// - BARBEIRO vê só os próprios; com ?equipe=1 e for o barbeiro chefe da
+//   barbearia, vê os de todos os barbeiros (mesmo escopo que o DONO já
+//   tem) — sem o parâmetro (ou se não for chefe), nada muda, inclusive
+//   pro próprio chefe: ele continua vendo só os PRÓPRIOS pedidos
+//   pendentes na seção de confirmar/recusar.
 // - DONO vê todos da barbearia
 // - CLIENTE vê os próprios (histórico)
 export async function GET(req: NextRequest) {
@@ -105,8 +141,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ erro: "Data inválida" }, { status: 400 });
   }
 
+  const equipe = req.nextUrl.searchParams.get("equipe") === "1";
+
   const where: any = {};
-  if (sessao.papel === "BARBEIRO") where.barbeiroId = sessao.usuarioId;
+  if (sessao.papel === "BARBEIRO") {
+    where.barbeiroId = sessao.usuarioId;
+    if (equipe && (await sessaoTemPrivilegioDeChefe(sessao))) {
+      delete where.barbeiroId;
+      where.barbeariaId = sessao.barbeariaId;
+    }
+  }
   if (sessao.papel === "DONO") where.barbeariaId = sessao.barbeariaId;
   if (sessao.papel === "CLIENTE") where.clienteId = sessao.usuarioId;
   if (statusFiltro) where.status = statusFiltro;

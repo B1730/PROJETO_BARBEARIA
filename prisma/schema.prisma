@@ -46,7 +46,10 @@ model Usuario {
   id            String        @id @default(cuid())
   nome          String
   email         String        @unique
-  senhaHash     String
+  // Opcional porque conta criada via "Entrar com Google" não tem senha —
+  // ver src/app/api/auth/google/callback/route.ts. Login por e-mail/senha
+  // sempre checa se isso está preenchido antes de comparar.
+  senhaHash     String?
   telefone      String?
   papel         PapelUsuario
   criadoEm      DateTime      @default(now())
@@ -57,6 +60,18 @@ model Usuario {
   // não dá pra gerar isso do nosso lado, é o barbeiro quem ativa.
   whatsapp        String?
   callmebotApiKey String?
+
+  // Só faz sentido quando papel = BARBEIRO. "Um chefe só por barbearia":
+  // o dono promove/rebaixa (ver POST /api/barbeiros/[id]), que garante
+  // essa regra rebaixando qualquer chefe atual antes de promover outro.
+  // O chefe enxerga agenda/faturamento de todos os barbeiros da mesma
+  // barbearia (ver src/lib/exigirSessao.ts, sessaoTemPrivilegioDeChefe).
+  ehChefe         Boolean  @default(false)
+
+  // Foto de perfil (só barbeiro usa isso na interface, mas o campo fica
+  // disponível pra qualquer usuário). Guardada no Supabase Storage — este
+  // campo é só a URL pública, não o arquivo.
+  fotoUrl       String?
 
   // Barbeiros e donos pertencem a uma barbearia. Clientes podem agendar em
   // qualquer barbearia, então barbeariaId fica nulo para eles.
@@ -84,6 +99,8 @@ model Servico {
   duracaoMinutos Int     @default(30)
   precoBase     Decimal  @db.Decimal(10, 2)
   ativo         Boolean  @default(true)
+  // URL pública da foto no Supabase Storage (bucket "cortes"), opcional.
+  imagemUrl     String?
 
   barbeiros     ServicoBarbeiro[]
   agendamentos  Agendamento[]
@@ -134,6 +151,13 @@ model Agendamento {
 
   data          DateTime          // data e hora de início do agendamento
   precoCobrado  Decimal           @db.Decimal(10, 2) // "congela" o preço no momento do agendamento
+  // "Congela" a duração do serviço no momento do agendamento, igual
+  // precoCobrado — sem isso, mudar duracaoMinutos de um Servico depois que
+  // já existem agendamentos muda retroativamente o cálculo de conflito de
+  // horário deles (ver src/lib/horarios.ts). Nullable só pra não exigir
+  // backfill dos agendamentos criados antes desse campo existir — nesses
+  // casos o cálculo cai de volta pra duração atual do serviço.
+  duracaoMinutos Int?
   status        StatusAgendamento @default(PENDENTE)
 
   criadoEm      DateTime          @default(now())

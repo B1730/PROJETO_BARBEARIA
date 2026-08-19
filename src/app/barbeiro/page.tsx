@@ -28,12 +28,15 @@ function hojeBrasil() {
 type Agendamento = {
   id: string; status: string; data: string;
   cliente: { nome: string }; servico: { nome: string }; precoCobrado: string;
+  barbeiro?: { id: string; nome: string };
 };
 type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type Servico = {
-  id: string; nome: string; precoBase: string; duracaoMinutos: number;
+  id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
   barbeiros: { barbeiroId: string; preco: string }[];
 };
+type BarbeiroEquipe = { id: string; nome: string; email: string; ehChefe: boolean };
+type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
 
 export default function PainelBarbeiro() {
   const router = useRouter();
@@ -52,30 +55,56 @@ export default function PainelBarbeiro() {
   const [novoServicoNome, setNovoServicoNome] = useState("");
   const [novoServicoPreco, setNovoServicoPreco] = useState("");
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
+  const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
   const [meuId, setMeuId] = useState<string | null>(null);
+  const [ehChefe, setEhChefe] = useState(false);
+  const [cortesHoje, setCortesHoje] = useState<number | null>(null);
+
+  const [equipePeriodo, setEquipePeriodo] = useState<"dia" | "mes" | "ano">("mes");
+  const [equipeBarbeiros, setEquipeBarbeiros] = useState<BarbeiroEquipe[]>([]);
+  const [equipeAgendaHoje, setEquipeAgendaHoje] = useState<Agendamento[]>([]);
+  const [equipeFinanceiro, setEquipeFinanceiro] = useState<Financeiro | null>(null);
+  const [novoContratadoNome, setNovoContratadoNome] = useState("");
+  const [novoContratadoEmail, setNovoContratadoEmail] = useState("");
+  const [salvandoContratado, setSalvandoContratado] = useState(false);
+
+  async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
+    const form = new FormData();
+    form.append("arquivo", arquivo);
+    form.append("pasta", pasta);
+    const resp = await fetch("/api/upload", { method: "POST", body: form });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.erro || "Não foi possível enviar a imagem");
+    return dados.url as string;
+  }
 
   useEffect(() => {
-    fetch("/api/auth/sessao").then((r) => r.ok && r.json()).then((d) => d && setMeuId(d.usuario.id));
+    fetch("/api/auth/sessao").then((r) => r.ok && r.json()).then((d) => {
+      if (!d) return;
+      setMeuId(d.usuario.id);
+      setEhChefe(!!d.usuario.ehChefe);
+    });
   }, []);
 
   async function carregarTudo(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
-    const [pendResp, hojeResp, dispResp, finResp, servResp] = await Promise.all([
+    const [pendResp, hojeResp, dispResp, finResp, finHojeResp, servResp] = await Promise.all([
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}`),
       fetch("/api/disponibilidade"),
       fetch("/api/financeiro?periodo=mes"),
+      fetch("/api/financeiro?periodo=dia"),
       fetch("/api/servicos"),
     ]);
 
-    const semAcesso = [pendResp, hojeResp, dispResp, finResp, servResp].some((r) => r.status === 401 || r.status === 403);
+    const semAcesso = [pendResp, hojeResp, dispResp, finResp, finHojeResp, servResp].some((r) => r.status === 401 || r.status === 403);
     if (semAcesso) {
       router.push("/entrar");
       return;
     }
-    if (!pendResp.ok || !hojeResp.ok || !dispResp.ok || !finResp.ok || !servResp.ok) {
+    if (!pendResp.ok || !hojeResp.ok || !dispResp.ok || !finResp.ok || !finHojeResp.ok || !servResp.ok) {
       if (mostrarSpinner) {
         setErro("Não foi possível carregar os dados do painel.");
         setCarregando(false);
@@ -83,18 +112,55 @@ export default function PainelBarbeiro() {
       return;
     }
 
-    const [pend, hoje, disp, fin, serv] = await Promise.all([
-      pendResp.json(), hojeResp.json(), dispResp.json(), finResp.json(), servResp.json(),
+    const [pend, hoje, disp, fin, finHoje, serv] = await Promise.all([
+      pendResp.json(), hojeResp.json(), dispResp.json(), finResp.json(), finHojeResp.json(), servResp.json(),
     ]);
     setPendentes(pend.agendamentos || []);
     setAgendaHoje(hoje.agendamentos || []);
     setDisponibilidades(disp.disponibilidades || []);
     setFinanceiro(fin);
+    setCortesHoje(finHoje.totalDeAtendimentos ?? null);
     setServicos(serv.servicos || []);
     if (mostrarSpinner) setCarregando(false);
   }
 
   useEffect(() => { carregarTudo(true); }, []);
+
+  async function carregarEquipe() {
+    const [bResp, aResp, fResp] = await Promise.all([
+      fetch("/api/barbeiros"),
+      fetch(`/api/agendamentos?data=${hojeBrasil()}&equipe=1`),
+      fetch(`/api/financeiro?periodo=${equipePeriodo}&equipe=1`),
+    ]);
+    if (!bResp.ok || !aResp.ok || !fResp.ok) return;
+    const [b, a, f] = await Promise.all([bResp.json(), aResp.json(), fResp.json()]);
+    setEquipeBarbeiros(b.barbeiros || []);
+    setEquipeAgendaHoje(a.agendamentos || []);
+    setEquipeFinanceiro(f);
+  }
+
+  useEffect(() => { if (ehChefe) carregarEquipe(); }, [ehChefe, equipePeriodo]);
+
+  async function contratarBarbeiro(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+    setSalvandoContratado(true);
+    const resp = await fetch("/api/barbeiros", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome: novoContratadoNome, email: novoContratadoEmail }),
+    });
+    setSalvandoContratado(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível enviar o convite");
+      return;
+    }
+    setNovoContratadoNome(""); setNovoContratadoEmail("");
+    setSucesso("Convite enviado — ele(a) recebe um e-mail pra confirmar e criar a senha.");
+    carregarEquipe();
+  }
 
   useEffect(() => {
     // Faz o pedido do cliente aparecer sozinho na agenda, sem precisar de reload.
@@ -153,6 +219,18 @@ export default function PainelBarbeiro() {
     setErro("");
     setSucesso("");
     setSalvandoServico(true);
+
+    let imagemUrl: string | undefined;
+    if (novoServicoImagem) {
+      try {
+        imagemUrl = await enviarImagem(novoServicoImagem, "cortes");
+      } catch (erro: any) {
+        setSalvandoServico(false);
+        setErro(erro.message || "Não foi possível enviar a imagem");
+        return;
+      }
+    }
+
     const resp = await fetch("/api/servicos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -160,6 +238,7 @@ export default function PainelBarbeiro() {
         nome: novoServicoNome,
         precoBase: Number(novoServicoPreco),
         duracaoMinutos: Number(novoServicoDuracao),
+        imagemUrl,
       }),
     });
     setSalvandoServico(false);
@@ -168,7 +247,7 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível cadastrar esse corte");
       return;
     }
-    setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30");
+    setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30"); setNovoServicoImagem(null);
     setSucesso("Corte cadastrado — só aparece pra você agendar.");
     carregarTudo(false);
   }
@@ -194,7 +273,10 @@ export default function PainelBarbeiro() {
         <section className="card">
           <h2 className="font-medium mb-1">Faturamento do mês</h2>
           <p className="text-2xl">R$ {financeiro.totalGeral.toFixed(2)}</p>
-          <p className="text-sm text-ink/60">{financeiro.totalDeAtendimentos} atendimentos concluídos</p>
+          <p className="text-sm text-ink/60">
+            {financeiro.totalDeAtendimentos} atendimentos concluídos no mês
+            {cortesHoje !== null && ` · ${cortesHoje} hoje`}
+          </p>
         </section>
       )}
 
@@ -283,8 +365,14 @@ export default function PainelBarbeiro() {
           {servicos
             .filter((s) => s.barbeiros.length === 0 || s.barbeiros.some((b) => b.barbeiroId === meuId))
             .map((s) => (
-              <div key={s.id} className="card flex justify-between">
-                <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+              <div key={s.id} className="card flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  {s.imagemUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.imagemUrl} alt={s.nome} className="h-10 w-10 rounded-md object-cover" />
+                  )}
+                  <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+                </div>
                 <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
               </div>
             ))}
@@ -293,11 +381,98 @@ export default function PainelBarbeiro() {
           <input className="input" placeholder="Nome do corte" value={novoServicoNome} onChange={(e) => setNovoServicoNome(e.target.value)} required />
           <input className="input" type="number" step="0.01" placeholder="Preço (R$)" value={novoServicoPreco} onChange={(e) => setNovoServicoPreco(e.target.value)} required />
           <input className="input" type="number" placeholder="Duração (minutos)" value={novoServicoDuracao} onChange={(e) => setNovoServicoDuracao(e.target.value)} required />
+          <div>
+            <label className="text-sm text-ink/60 mb-1 block">Foto do corte (opcional)</label>
+            <input
+              className="input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => setNovoServicoImagem(e.target.files?.[0] || null)}
+            />
+          </div>
           <button className="btn-primary" disabled={salvandoServico}>
             {salvandoServico ? "Cadastrando..." : "Cadastrar corte"}
           </button>
         </form>
       </section>
+
+      {ehChefe && (
+        <section>
+          <h2 className="font-medium mb-3">Minha equipe</h2>
+
+          <div className="card mb-4">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-medium">Faturamento da equipe</h3>
+              <select className="input w-32" value={equipePeriodo} onChange={(e) => setEquipePeriodo(e.target.value as any)}>
+                <option value="dia">Hoje</option>
+                <option value="mes">Este mês</option>
+                <option value="ano">Este ano</option>
+              </select>
+            </div>
+            {equipeFinanceiro && (
+              <>
+                <p className="text-2xl mb-1">R$ {equipeFinanceiro.totalGeral.toFixed(2)}</p>
+                <p className="text-sm text-ink/60 mb-4">{equipeFinanceiro.totalDeAtendimentos} atendimentos concluídos</p>
+                <div className="space-y-2">
+                  {equipeFinanceiro.porBarbeiro.map((b) => (
+                    <div key={b.barbeiroId} className="flex justify-between text-sm border-t border-line pt-2">
+                      <span>{b.nome} <span className="text-ink/50">({b.quantidade} atendimentos)</span></span>
+                      <span className="font-medium">R$ {b.total.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="mb-4">
+            <h3 className="font-medium mb-2">Agendamentos de hoje (toda a equipe)</h3>
+            {equipeAgendaHoje.length === 0 && <p className="text-sm text-ink/50">Nada marcado pra hoje.</p>}
+            <div className="space-y-2">
+              {equipeAgendaHoje.map((ag) => (
+                <div key={ag.id} className="card flex justify-between items-center">
+                  <div>
+                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="text-sm text-ink/60">
+                      {ag.barbeiro?.nome ?? "—"}
+                      {" · "}
+                      {new Date(ag.data).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
+                      {" · "}
+                      <span className={COR_STATUS[ag.status] || ""}>{ROTULO_STATUS[ag.status] || ag.status}</span>
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <h3 className="font-medium mb-2">Barbeiros contratados</h3>
+            {equipeBarbeiros.filter((b) => !b.ehChefe).length === 0 && (
+              <p className="text-sm text-ink/50 mb-2">Nenhum barbeiro contratado ainda.</p>
+            )}
+            <div className="space-y-2">
+              {equipeBarbeiros.filter((b) => !b.ehChefe).map((b) => (
+                <div key={b.id} className="card flex justify-between">
+                  <span>{b.nome}</span>
+                  <span className="text-sm text-ink/50">{b.email}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={contratarBarbeiro} className="card grid gap-2">
+            <input className="input" placeholder="Nome do barbeiro" value={novoContratadoNome} onChange={(e) => setNovoContratadoNome(e.target.value)} required />
+            <input className="input" type="email" placeholder="E-mail" value={novoContratadoEmail} onChange={(e) => setNovoContratadoEmail(e.target.value)} required />
+            <p className="text-xs text-ink/50">
+              Ele(a) recebe um e-mail pra confirmar e criar a própria senha.
+            </p>
+            <button className="btn-primary" disabled={salvandoContratado}>
+              {salvandoContratado ? "Enviando convite..." : "Enviar convite"}
+            </button>
+          </form>
+        </section>
+      )}
       </main>
     </>
   );

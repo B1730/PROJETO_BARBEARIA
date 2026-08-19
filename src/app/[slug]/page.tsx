@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
-type Servico = { id: string; nome: string; precoBase: string; duracaoMinutos: number; barbeiros: { barbeiroId: string; preco: string; barbeiro: { id: string; nome: string } }[] };
-type Barbearia = { id: string; nome: string; servicos: Servico[]; usuarios: { id: string; nome: string }[] };
+type Servico = {
+  id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
+  barbeiros: { barbeiroId: string; preco: string; barbeiro: { id: string; nome: string } }[];
+};
+type Barbearia = { nome: string; servicos: Servico[]; usuarios: { id: string; nome: string; fotoUrl: string | null }[] };
 
 export default function PaginaBarbearia() {
   const { slug } = useParams<{ slug: string }>();
@@ -13,11 +16,13 @@ export default function PaginaBarbearia() {
   const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   const [data, setData] = useState("");
   const [horarios, setHorarios] = useState<string[]>([]);
+  const [semExpediente, setSemExpediente] = useState(false);
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [carregandoHorarios, setCarregandoHorarios] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [naoEncontrada, setNaoEncontrada] = useState(false);
+  const [barbeiroConfirmado, setBarbeiroConfirmado] = useState<{ nome: string; whatsapp: string | null } | null>(null);
 
   useEffect(() => {
     fetch(`/api/barbearias/${slug}`)
@@ -34,18 +39,24 @@ export default function PaginaBarbearia() {
     setCarregandoHorarios(true);
     fetch(`/api/horarios-livres?barbeiroId=${barbeiroEscolhidoId}&servicoId=${servicoEscolhido.id}&data=${data}`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelado) { setHorarios(d.horarios || []); setCarregandoHorarios(false); } });
+      .then((d) => {
+        if (!cancelado) {
+          setHorarios(d.horarios || []);
+          setSemExpediente(!!d.semExpediente);
+          setCarregandoHorarios(false);
+        }
+      });
     return () => { cancelado = true; };
   }, [servicoEscolhido, barbeiroEscolhidoId, data]);
 
   async function confirmarAgendamento() {
     setMensagem("");
+    setBarbeiroConfirmado(null);
     setEnviando(true);
     const resp = await fetch("/api/agendamentos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        barbeariaId: barbearia!.id,
         barbeiroId: barbeiroEscolhidoId,
         servicoId: servicoEscolhido!.id,
         data,
@@ -63,6 +74,7 @@ export default function PaginaBarbearia() {
       return;
     }
     setMensagem("Pedido enviado! O barbeiro vai confirmar em breve.");
+    if (dados.barbeiro) setBarbeiroConfirmado(dados.barbeiro);
   }
 
   if (naoEncontrada) return <main className="max-w-2xl mx-auto px-6 py-20">Barbearia não encontrada.</main>;
@@ -86,9 +98,17 @@ export default function PaginaBarbearia() {
             <button
               key={s.id}
               onClick={() => { setServicoEscolhido(s); setBarbeiroEscolhidoId(null); setHoraEscolhida(null); }}
-              className={`card text-left flex justify-between items-center ${servicoEscolhido?.id === s.id ? "border-accent" : ""}`}
+              className={`card text-left flex justify-between items-center gap-3 ${servicoEscolhido?.id === s.id ? "border-accent" : ""}`}
             >
-              <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+              <div className="flex items-center gap-3">
+                {s.imagemUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.imagemUrl} alt={s.nome} className="h-12 w-12 rounded-md object-cover shrink-0" />
+                ) : (
+                  <div className="h-12 w-12 rounded-md bg-accentSoft shrink-0" aria-hidden />
+                )}
+                <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+              </div>
               <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
             </button>
           ))}
@@ -103,8 +123,14 @@ export default function PaginaBarbearia() {
               <button
                 key={b.id}
                 onClick={() => { setBarbeiroEscolhidoId(b.id); setHoraEscolhida(null); }}
-                className={`card text-left ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
+                className={`card text-left flex items-center gap-3 ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
               >
+                {b.fotoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={b.fotoUrl} alt={b.nome} className="h-10 w-10 rounded-full object-cover shrink-0" />
+                ) : (
+                  <div className="h-10 w-10 rounded-full bg-accentSoft shrink-0" aria-hidden />
+                )}
                 {b.nome}
               </button>
             ))}
@@ -119,7 +145,13 @@ export default function PaginaBarbearia() {
           {data && (
             <div className="flex flex-wrap gap-2">
               {carregandoHorarios && <p className="text-sm text-ink/50">Carregando horários...</p>}
-              {!carregandoHorarios && horarios.length === 0 && <p className="text-sm text-ink/50">Nenhum horário livre neste dia.</p>}
+              {!carregandoHorarios && horarios.length === 0 && (
+                <p className="text-sm text-ink/50">
+                  {semExpediente
+                    ? "Esse profissional não atende nesse dia da semana. Escolha outra data."
+                    : "Nenhum horário livre neste dia — todos os horários já foram preenchidos."}
+                </p>
+              )}
               {!carregandoHorarios && horarios.map((h) => (
                 <button
                   key={h}
@@ -147,11 +179,21 @@ export default function PaginaBarbearia() {
               {mensagem}{" "}
               {mensagem.includes("conta") && (
                 <>
-                  <a className="underline" href="/entrar">Entrar</a> ou{" "}
+                  <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a> ou{" "}
                   <a className="underline" href="/cadastro?papel=CLIENTE">criar conta</a>
                 </>
               )}
             </p>
+          )}
+          {barbeiroConfirmado?.whatsapp && (
+            <a
+              className="btn-secondary inline-block mt-3"
+              href={`https://wa.me/${barbeiroConfirmado.whatsapp}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Falar no WhatsApp com {barbeiroConfirmado.nome}
+            </a>
           )}
         </section>
       )}

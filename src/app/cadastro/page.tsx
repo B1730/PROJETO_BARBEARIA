@@ -51,6 +51,18 @@ function FormularioCadastro() {
           ? "Você vira o dono/administrador — depois adiciona barbeiros por dentro do painel."
           : "Com sua conta você consegue solicitar agendamentos nas barbearias."}
       </p>
+      {papel === "DONO" && (
+        <>
+          <a href="/api/auth/google?intent=DONO" className="btn-secondary w-full flex items-center justify-center gap-2 mb-6">
+            Cadastrar com Google
+          </a>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="h-px flex-1 bg-line" />
+            <span className="text-xs text-ink/40">ou preencha os dados</span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+        </>
+      )}
       <form onSubmit={cadastrar} className="space-y-4">
         {papel === "DONO" && (
           <input className="input" placeholder="Nome da barbearia" value={nomeBarbearia} onChange={(e) => setNomeBarbearia(e.target.value)} required />

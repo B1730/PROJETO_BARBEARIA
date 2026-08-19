@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/lib/exigirSessao";
+import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
 
 // GET /api/financeiro?periodo=mes
 // periodo: "dia" | "mes" | "ano" (padrão: mes)
 // DONO vê o faturamento da barbearia inteira, agrupado por barbeiro.
-// BARBEIRO vê só o próprio faturamento.
+// BARBEIRO vê só o próprio faturamento — a não ser que seja o barbeiro
+// chefe da barbearia E passe ?equipe=1, aí vê o mesmo agrupado que o dono
+// vê. Sem esse parâmetro o chefe também só vê o próprio (usado pro
+// cartão pessoal dele no painel).
 export async function GET(req: NextRequest) {
   const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
@@ -42,8 +45,16 @@ export async function GET(req: NextRequest) {
     status: "CONCLUIDO", // só conta o que efetivamente foi realizado
     data: { gte: inicio, lt: fim },
   };
+  const equipe = req.nextUrl.searchParams.get("equipe") === "1";
+
   if (sessao.papel === "DONO") where.barbeariaId = sessao.barbeariaId;
-  if (sessao.papel === "BARBEIRO") where.barbeiroId = sessao.usuarioId;
+  if (sessao.papel === "BARBEIRO") {
+    where.barbeiroId = sessao.usuarioId;
+    if (equipe && (await sessaoTemPrivilegioDeChefe(sessao))) {
+      delete where.barbeiroId;
+      where.barbeariaId = sessao.barbeariaId;
+    }
+  }
 
   const agendamentos = await db.agendamento.findMany({
     where,

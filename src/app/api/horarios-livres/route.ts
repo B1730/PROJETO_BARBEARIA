@@ -18,11 +18,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
 
-  const horarios = await calcularHorariosLivres({
+  // Mesma checagem cross-tenant que POST /api/agendamentos já faz — sem
+  // isso, dava pra consultar a agenda de um barbeiro de uma barbearia
+  // usando o servicoId de outra barbearia qualquer (vazamento do padrão de
+  // horários ocupados de um concorrente).
+  const barbeiro = await db.usuario.findUnique({ where: { id: barbeiroId } });
+  if (!barbeiro || barbeiro.papel !== "BARBEIRO" || barbeiro.barbeariaId !== servico.barbeariaId) {
+    return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
+  }
+
+  const resultado = await calcularHorariosLivres({
     barbeiroId,
     data,
     duracaoMinutos: servico.duracaoMinutos,
   });
 
-  return NextResponse.json({ horarios });
+  return NextResponse.json(resultado);
 }

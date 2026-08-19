@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Cabecalho from "@/components/Cabecalho";
 
-type Barbeiro = { id: string; nome: string; email: string };
-type Servico = { id: string; nome: string; precoBase: string; duracaoMinutos: number };
+type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
+type Servico = { id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
 
 export default function PainelAdmin() {
@@ -20,13 +20,24 @@ export default function PainelAdmin() {
 
   const [novoBarbeiroNome, setNovoBarbeiroNome] = useState("");
   const [novoBarbeiroEmail, setNovoBarbeiroEmail] = useState("");
-  const [novoBarbeiroSenha, setNovoBarbeiroSenha] = useState("");
   const [salvandoBarbeiro, setSalvandoBarbeiro] = useState(false);
+  const [alternandoChefeId, setAlternandoChefeId] = useState<string | null>(null);
 
   const [novoServicoNome, setNovoServicoNome] = useState("");
   const [novoServicoPreco, setNovoServicoPreco] = useState("");
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
+  const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
+
+  async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
+    const form = new FormData();
+    form.append("arquivo", arquivo);
+    form.append("pasta", pasta);
+    const resp = await fetch("/api/upload", { method: "POST", body: form });
+    const dados = await resp.json();
+    if (!resp.ok) throw new Error(dados.erro || "Não foi possível enviar a imagem");
+    return dados.url as string;
+  }
 
   async function carregarTudo(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
@@ -66,16 +77,35 @@ export default function PainelAdmin() {
     const resp = await fetch("/api/barbeiros", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome: novoBarbeiroNome, email: novoBarbeiroEmail, senhaInicial: novoBarbeiroSenha }),
+      body: JSON.stringify({ nome: novoBarbeiroNome, email: novoBarbeiroEmail }),
     });
     setSalvandoBarbeiro(false);
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível adicionar esse barbeiro");
+      setErro(dados.erro || "Não foi possível enviar o convite");
       return;
     }
-    setNovoBarbeiroNome(""); setNovoBarbeiroEmail(""); setNovoBarbeiroSenha("");
-    setSucesso("Barbeiro adicionado.");
+    setNovoBarbeiroNome(""); setNovoBarbeiroEmail("");
+    setSucesso("Convite enviado — ele(a) recebe um e-mail pra confirmar e criar a senha.");
+    carregarTudo(false);
+  }
+
+  async function alternarChefe(b: Barbeiro) {
+    setErro("");
+    setSucesso("");
+    setAlternandoChefeId(b.id);
+    const resp = await fetch(`/api/barbeiros/${b.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ehChefe: !b.ehChefe }),
+    });
+    setAlternandoChefeId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível atualizar esse barbeiro");
+      return;
+    }
+    setSucesso(b.ehChefe ? "Barbeiro deixou de ser chefe." : "Barbeiro promovido a chefe.");
     carregarTudo(false);
   }
 
@@ -84,6 +114,18 @@ export default function PainelAdmin() {
     setErro("");
     setSucesso("");
     setSalvandoServico(true);
+
+    let imagemUrl: string | undefined;
+    if (novoServicoImagem) {
+      try {
+        imagemUrl = await enviarImagem(novoServicoImagem, "cortes");
+      } catch (erro: any) {
+        setSalvandoServico(false);
+        setErro(erro.message || "Não foi possível enviar a imagem");
+        return;
+      }
+    }
+
     const resp = await fetch("/api/servicos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -91,6 +133,7 @@ export default function PainelAdmin() {
         nome: novoServicoNome,
         precoBase: Number(novoServicoPreco),
         duracaoMinutos: Number(novoServicoDuracao),
+        imagemUrl,
       }),
     });
     setSalvandoServico(false);
@@ -99,7 +142,7 @@ export default function PainelAdmin() {
       setErro(dados.erro || "Não foi possível adicionar esse corte");
       return;
     }
-    setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30");
+    setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30"); setNovoServicoImagem(null);
     setSucesso("Corte cadastrado.");
     carregarTudo(false);
   }
@@ -150,18 +193,30 @@ export default function PainelAdmin() {
         <h2 className="font-medium mb-3">Barbeiros</h2>
         <div className="space-y-2 mb-4">
           {barbeiros.map((b) => (
-            <div key={b.id} className="card flex justify-between">
-              <span>{b.nome}</span>
-              <span className="text-sm text-ink/50">{b.email}</span>
+            <div key={b.id} className="card flex justify-between items-center">
+              <div>
+                <span>{b.nome}</span>
+                {b.ehChefe && <span className="ml-2 text-xs text-accent">★ Chefe</span>}
+                <span className="block text-sm text-ink/50">{b.email}</span>
+              </div>
+              <button
+                className="text-sm text-ink/60 hover:text-ink"
+                disabled={alternandoChefeId === b.id}
+                onClick={() => alternarChefe(b)}
+              >
+                {alternandoChefeId === b.id ? "..." : b.ehChefe ? "Remover como chefe" : "Tornar chefe"}
+              </button>
             </div>
           ))}
         </div>
         <form onSubmit={adicionarBarbeiro} className="card grid gap-2">
           <input className="input" placeholder="Nome do barbeiro" value={novoBarbeiroNome} onChange={(e) => setNovoBarbeiroNome(e.target.value)} required />
           <input className="input" type="email" placeholder="E-mail" value={novoBarbeiroEmail} onChange={(e) => setNovoBarbeiroEmail(e.target.value)} required />
-          <input className="input" type="password" placeholder="Senha inicial (ele troca depois)" value={novoBarbeiroSenha} onChange={(e) => setNovoBarbeiroSenha(e.target.value)} required minLength={6} />
+          <p className="text-xs text-ink/50">
+            Ele(a) recebe um e-mail pra confirmar e criar a própria senha.
+          </p>
           <button className="btn-primary" disabled={salvandoBarbeiro}>
-            {salvandoBarbeiro ? "Adicionando..." : "Adicionar barbeiro"}
+            {salvandoBarbeiro ? "Enviando convite..." : "Enviar convite"}
           </button>
         </form>
       </section>
@@ -170,8 +225,14 @@ export default function PainelAdmin() {
         <h2 className="font-medium mb-3">Cortes e preços</h2>
         <div className="space-y-2 mb-4">
           {servicos.map((s) => (
-            <div key={s.id} className="card flex justify-between">
-              <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+            <div key={s.id} className="card flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                {s.imagemUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.imagemUrl} alt={s.nome} className="h-10 w-10 rounded-md object-cover" />
+                )}
+                <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+              </div>
               <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
             </div>
           ))}
@@ -180,6 +241,15 @@ export default function PainelAdmin() {
           <input className="input" placeholder="Nome do corte" value={novoServicoNome} onChange={(e) => setNovoServicoNome(e.target.value)} required />
           <input className="input" type="number" step="0.01" placeholder="Preço (R$)" value={novoServicoPreco} onChange={(e) => setNovoServicoPreco(e.target.value)} required />
           <input className="input" type="number" placeholder="Duração (minutos)" value={novoServicoDuracao} onChange={(e) => setNovoServicoDuracao(e.target.value)} required />
+          <div>
+            <label className="text-sm text-ink/60 mb-1 block">Foto do corte (opcional)</label>
+            <input
+              className="input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => setNovoServicoImagem(e.target.files?.[0] || null)}
+            />
+          </div>
           <button className="btn-primary" disabled={salvandoServico}>
             {salvandoServico ? "Adicionando..." : "Adicionar corte"}
           </button>

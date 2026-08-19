@@ -1,4 +1,47 @@
 import { db } from "./db";
+import type { Prisma } from "@prisma/client";
+
+// Aceita tanto o cliente Prisma normal quanto um cliente de transação
+// (`tx` dentro de `db.$transaction`) — usado pra reconferir o horário
+// dentro da mesma transação que cria o agendamento (ver agendamentos/route.ts).
+type ClientePrisma = typeof db | Prisma.TransactionClient;
+
+type Ocupado = { inicio: Date; fim: Date };
+
+// Busca os agendamentos que já ocupam a agenda do barbeiro naquele dia e
+// devolve os intervalos [início, fim) de cada um. A duração usada é a
+// congelada no próprio agendamento (`duracaoMinutos`) quando existir —
+// agendamentos criados antes desse campo existir caem no fallback pela
+// duração atual do serviço.
+export async function buscarAgendamentosOcupados(
+  cliente: ClientePrisma,
+  params: { barbeiroId: string; data: string }
+): Promise<Ocupado[]> {
+  const { barbeiroId, data } = params;
+  const inicioDoDia = new Date(`${data}T00:00:00-03:00`);
+  const fimDoDia = new Date(`${data}T23:59:59-03:00`);
+
+  const agendamentos = await cliente.agendamento.findMany({
+    where: {
+      barbeiroId,
+      data: { gte: inicioDoDia, lte: fimDoDia },
+      status: { in: ["PENDENTE", "CONFIRMADO"] },
+    },
+    include: { servico: true },
+  });
+
+  return agendamentos.map((ag) => {
+    const inicio = new Date(ag.data);
+    const duracao = ag.duracaoMinutos ?? ag.servico.duracaoMinutos;
+    return { inicio, fim: new Date(inicio.getTime() + duracao * 60000) };
+  });
+}
+
+// Sobreposição de intervalos meio-aberto [inicio, fim) — dois agendamentos
+// só não conflitam se um termina antes do outro começar (ou vice-versa).
+export function conflitaComOcupados(inicio: Date, fim: Date, ocupados: Ocupado[]) {
+  return ocupados.some((o) => inicio < o.fim && fim > o.inicio);
+}
 
 /**
  * Calcula os horários livres de um barbeiro em uma data específica.
@@ -23,20 +66,20 @@ export async function calcularHorariosLivres(params: {
   const disponibilidades = await db.disponibilidade.findMany({
     where: { barbeiroId, diaDaSemana },
   });
-  if (disponibilidades.length === 0) return [];
+  // Diferencia "o barbeiro não atende nesse dia da semana" (dado que falta)
+  // de "atende, mas não sobrou horário livre" — pro cliente entender por
+  // que a lista veio vazia em vez de parecer que o sistema quebrou.
+  if (disponibilidades.length === 0) return { horarios: [], semExpediente: true };
+  // Guarda defensiva: com duração 0 (ou negativa) o cursor do loop abaixo
+  // nunca avança e a requisição trava para sempre. Hoje as rotas que chamam
+  // essa função já validam duracaoMinutos > 0 via zod, mas essa função é
+  // citada no CLAUDE.md como "a lógica mais delicada do sistema" — não deve
+  // depender só da validação de quem chama.
+  if (duracaoMinutos <= 0) return { horarios: [], semExpediente: false };
 
-  const inicioDoDia = dataBase;
-  const fimDoDia = new Date(`${data}T23:59:59-03:00`);
+  const ocupados = await buscarAgendamentosOcupados(db, { barbeiroId, data });
 
-  const agendamentosOcupados = await db.agendamento.findMany({
-    where: {
-      barbeiroId,
-      data: { gte: inicioDoDia, lte: fimDoDia },
-      status: { in: ["PENDENTE", "CONFIRMADO"] },
-    },
-    include: { servico: true },
-  });
-
+  const agora = new Date();
   const slotsLivres: string[] = [];
 
   for (const janela of disponibilidades) {
@@ -54,13 +97,8 @@ export async function calcularHorariosLivres(params: {
     while (cursor.getTime() + duracaoMinutos * 60000 <= fimJanela.getTime()) {
       const fimDoSlot = new Date(cursor.getTime() + duracaoMinutos * 60000);
 
-      const conflita = agendamentosOcupados.some((ag) => {
-        const inicioAg = new Date(ag.data);
-        const fimAg = new Date(inicioAg.getTime() + ag.servico.duracaoMinutos * 60000);
-        return cursor < fimAg && fimDoSlot > inicioAg;
-      });
-
-      if (!conflita) {
+      // Não oferece horário que já passou (só é relevante quando "data" é hoje).
+      if (!conflitaComOcupados(cursor, fimDoSlot, ocupados) && cursor.getTime() > agora.getTime()) {
         slotsLivres.push(
           cursor.toLocaleTimeString("pt-BR", {
             timeZone: "America/Sao_Paulo",
@@ -77,5 +115,5 @@ export async function calcularHorariosLivres(params: {
 
   // Janelas de disponibilidade sobrepostas no mesmo dia podem gerar o mesmo
   // horário mais de uma vez.
-  return Array.from(new Set(slotsLivres)).sort();
+  return { horarios: Array.from(new Set(slotsLivres)).sort(), semExpediente: false };
 }

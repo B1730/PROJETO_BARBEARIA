@@ -7,6 +7,8 @@ import Cabecalho from "@/components/Cabecalho";
 export default function PerfilBarbeiro() {
   const [whatsapp, setWhatsapp] = useState("");
   const [callmebotApiKey, setCallmebotApiKey] = useState("");
+  const [fotoUrl, setFotoUrl] = useState("");
+  const [novaFoto, setNovaFoto] = useState<File | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
@@ -18,6 +20,7 @@ export default function PerfilBarbeiro() {
       .then((d) => {
         setWhatsapp(d.usuario?.whatsapp || "");
         setCallmebotApiKey(d.usuario?.callmebotApiKey || "");
+        setFotoUrl(d.usuario?.fotoUrl || "");
         setCarregando(false);
       });
   }, []);
@@ -27,10 +30,26 @@ export default function PerfilBarbeiro() {
     setErro("");
     setSucesso("");
     setSalvando(true);
+
+    let novaFotoUrl = fotoUrl;
+    if (novaFoto) {
+      const form = new FormData();
+      form.append("arquivo", novaFoto);
+      form.append("pasta", "barbeiros");
+      const respUpload = await fetch("/api/upload", { method: "POST", body: form });
+      const dadosUpload = await respUpload.json();
+      if (!respUpload.ok) {
+        setSalvando(false);
+        setErro(dadosUpload.erro || "Não foi possível enviar a foto");
+        return;
+      }
+      novaFotoUrl = dadosUpload.url;
+    }
+
     const resp = await fetch("/api/perfil", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ whatsapp, callmebotApiKey }),
+      body: JSON.stringify({ whatsapp, callmebotApiKey, fotoUrl: novaFotoUrl }),
     });
     setSalvando(false);
     if (!resp.ok) {
@@ -38,6 +57,8 @@ export default function PerfilBarbeiro() {
       setErro(dados.erro || "Não foi possível salvar");
       return;
     }
+    setFotoUrl(novaFotoUrl);
+    setNovaFoto(null);
     setSucesso("Salvo!");
   }
 
@@ -67,6 +88,21 @@ export default function PerfilBarbeiro() {
           <p className="text-sm text-ink/50">Carregando...</p>
         ) : (
           <form onSubmit={salvar} className="space-y-4">
+            <div className="flex items-center gap-4">
+              {fotoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={fotoUrl} alt="Sua foto" className="h-16 w-16 rounded-full object-cover" />
+              )}
+              <div className="flex-1">
+                <label className="text-sm text-ink/60 mb-1 block">Foto de perfil (opcional)</label>
+                <input
+                  className="input"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => setNovaFoto(e.target.files?.[0] || null)}
+                />
+              </div>
+            </div>
             <div>
               <label className="text-sm text-ink/60 mb-1 block">Seu WhatsApp (com DDD e país, só números)</label>
               <input

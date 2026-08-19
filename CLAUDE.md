@@ -129,15 +129,22 @@ src/app/
 - `Usuario`: um único model para os 3 papéis (`papel`: CLIENTE / BARBEIRO / DONO).
   Clientes têm `barbeariaId` nulo (podem agendar em qualquer barbearia).
   Barbeiros e donos têm `barbeariaId` preenchido.
-- `Servico`: corte oferecido por uma barbearia (`precoBase`, `duracaoMinutos`).
+- `Servico`: corte oferecido por uma barbearia (`precoBase`, `duracaoMinutos`,
+  `imagemUrl` opcional — foto do corte, guardada no Supabase Storage).
 - `ServicoBarbeiro`: tabela de ligação — permite cada barbeiro ter um preço
   próprio para o mesmo corte, se quiser (opcional, senão usa `precoBase`).
 - `Disponibilidade`: janela semanal que o barbeiro cadastra (dia da semana + hora início/fim).
 - `Agendamento`: liga cliente + barbeiro + serviço + data/hora. `status` vai de
   PENDENTE → CONFIRMADO/RECUSADO (decisão do barbeiro) → CONCLUIDO (depois do
   atendimento acontecer — hoje isso não é automático, ver "Pendências" abaixo).
-  `precoCobrado` congela o preço no momento do agendamento (não muda se o
-  dono alterar o preço do serviço depois).
+  `precoCobrado` congela o preço no momento do agendamento, e
+  `duracaoMinutos` (nullable) congela a duração da mesma forma — nenhum dos
+  dois muda se o dono alterar o serviço depois. `duracaoMinutos` é nullable
+  só porque foi adicionado depois de já existirem agendamentos; o cálculo
+  de horário livre cai de volta pra duração atual do serviço quando é nulo.
+- `Usuario.senhaHash` é nullable: contas criadas via "Entrar com Google"
+  não têm senha. `Usuario.fotoUrl` guarda a foto de perfil (usada pelo
+  barbeiro), também no Supabase Storage.
 
 ## Regras de negócio que não podem ser quebradas
 
@@ -162,6 +169,57 @@ src/app/
    e a validação de `POST /api/agendamentos` considerarem que só aquele
    barbeiro oferece esse corte. Não remover essa criação de
    `ServicoBarbeiro` achando redundante — é o mecanismo inteiro da regra.
+6. **Barbeiro chefe**: um `BARBEIRO` pode ter `ehChefe: true`
+   (`Usuario.ehChefe`) — **só um por barbearia**, promovido/rebaixado pelo
+   dono via `PATCH /api/barbeiros/[id]` (a rota rebaixa qualquer chefe
+   atual antes de promover outro, numa transação, pra nunca sobrar mais
+   de um). O chefe continua com agenda/disponibilidade/cortes própria
+   igual qualquer barbeiro — por cima disso, ganha: (a) convidar barbeiro
+   novo por e-mail (`POST /api/barbeiros`, antes só o dono podia — ver
+   regra 8 sobre o convite em si); (b) ver
+   agenda/faturamento de todos os barbeiros da barbearia passando
+   `?equipe=1` em `GET /api/agendamentos`/`GET /api/financeiro` (sem esse
+   parâmetro, o comportamento é idêntico ao de um barbeiro comum — inclusive
+   pro próprio chefe, que só vê os PRÓPRIOS pedidos pendentes na tela de
+   aceitar/recusar); (c) ver a disponibilidade de um colega (só leitura)
+   via `GET /api/disponibilidade?barbeiroId=`. Um barbeiro comum (não
+   chefe) que tenta usar `?equipe=1` tem o parâmetro **ignorado**
+   silenciosamente (nunca 403, nunca vaza dado alheio — só devolve os
+   próprios dados como sempre) — só `?barbeiroId=` de outro colega em
+   `disponibilidade` retorna 403 se quem pede não for chefe/dono, porque
+   ali é um pedido explícito de dado de outra pessoa. `ehChefe` nunca
+   entra no cookie de sessão — toda rota que precisa saber confere direto
+   no banco (`sessaoTemPrivilegioDeChefe()` em
+   `src/lib/exigirSessao.ts`), pra uma promoção ter efeito imediato em vez
+   de esperar até 30 dias (validade do cookie).
+7. **Barbeiro nunca se autocadastra** — a única forma de virar `BARBEIRO`
+   de uma barbearia é o dono (ou o barbeiro chefe, ver regra 6) convidar
+   por `POST /api/barbeiros` (ver regra 8 — o convite por e-mail).
+   `POST /api/auth/cadastro` só aceita
+   `papel: "CLIENTE"` ou `"DONO"`. Isso já existiu de outro jeito (aceitava
+   `papel: "BARBEIRO"` + um `barbeariaId` informado no corpo da requisição)
+   e foi removido de propósito: `GET /api/barbearias/[slug]` é pública e
+   sempre foi usada pelo fluxo do cliente, então o id de qualquer barbearia
+   é descobrível por qualquer visitante — com o caminho antigo, isso
+   bastava pra qualquer um virar barbeiro de verdade de qualquer barbearia
+   existente, sem convite. Não reabrir esse caminho sem adicionar algum
+   tipo de convite/aprovação do dono.
+8. **Contratar barbeiro é um convite por e-mail, não criação direta** —
+   `POST /api/barbeiros` (dono ou chefe) **não cria** o `Usuario` na hora:
+   gera um token assinado (`criarTokenConviteBarbeiro`/
+   `lerTokenConviteBarbeiro` em `src/lib/auth.ts`, mesmo molde do convite
+   pendente do Google, validade 3 dias, nenhuma tabela nova) e manda um
+   e-mail via Resend (`src/lib/email.ts`, API HTTP direta com `fetch()`,
+   sem SDK — mesmo padrão de `whatsapp.ts`/`storage.ts`) com um link pra
+   `/convite/aceitar?token=...`. Só quando a pessoa convidada clica,
+   confirma e escolhe a própria senha
+   (`POST /api/barbeiros/aceitar-convite`) é que a conta passa a existir
+   — o chefe/dono nunca sabe a senha de quem contratou. Diferente da
+   notificação de WhatsApp (`notificarNovoAgendamento`, que falha em
+   silêncio de propósito), uma falha ao enviar esse e-mail **precisa**
+   virar erro pra quem convidou, porque é o único jeito da pessoa
+   completar o cadastro. Precisa de `RESEND_API_KEY` configurada (ver
+   "Ambiente").
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -173,17 +231,27 @@ src/app/
 - Não existe notificação (e-mail/WhatsApp) quando o barbeiro confirma ou recusa.
 - Não existe bloqueio de horário por exceção (ex: barbeiro de folga num
   dia específico dentro da janela normal de disponibilidade).
-- Upload de foto de perfil/cortes não foi implementado.
+- Não existe tela pra editar/desativar um corte já cadastrado ou trocar sua
+  foto depois de criado (a API já suporta via `PATCH`/`DELETE` em
+  `servicos/[id]`, só falta a interface).
+- Login com Google só cobre CLIENTE (login/cadastro automático) e DONO
+  (cadastro de barbearia). BARBEIRO não usa esse fluxo — ver regra de
+  negócio 7 acima.
+- Não existe tela pra editar um `Servico` existente pra vincular/desvincular
+  um `ServicoBarbeiro` de um contratado específico — hoje isso só acontece
+  na criação (quem cria o corte é quem fica dono dele).
 
 Se o usuário pedir para avançar em algum desses pontos, pode implementar
 diretamente — são extensões esperadas do sistema, não mudanças de escopo.
 
 ## Próxima leva de mudanças pedidas (ainda não implementadas)
 
-Nenhum item pendente no momento — a última leva pedida (sessão/cabeçalho,
-bug de horários, WhatsApp, agenda do dia, polling, frontend mais dinâmico)
-foi implementada por completo. Ver "Histórico de mudanças implementadas"
-abaixo para o que foi feito e quais decisões foram tomadas.
+Nenhum item pendente no momento. A última leva foi a hierarquia de
+barbeiro chefe/contratado (ver regra de negócio 6 e "Histórico de
+mudanças implementadas" abaixo). Ainda em backlog, sob pedido: os itens
+de baixa prioridade e de polimento de frontend/UX da segunda auditoria
+(não estão listados neste arquivo, só no histórico de conversa daquela
+sessão).
 
 ## Histórico de mudanças implementadas
 
@@ -245,12 +313,103 @@ abaixo para o que foi feito e quais decisões foram tomadas.
   chegar), botão de agendar desabilitado durante o envio, e mensagem clara
   quando a barbearia do slug não existe (antes ficava preso em
   "Carregando..." pra sempre).
+- **Landing page dinâmica + login/cadastro com Google + upload de
+  imagens**: `src/app/page.tsx` virou um Server Component que redireciona
+  DONO/BARBEIRO logados direto pro próprio painel (`/admin`/`/barbeiro`) —
+  só quem não está logado vê a landing de verdade. Login com Google
+  implementado do zero (sem NextAuth), fluxo Authorization Code com `jose`
+  verificando o JWKS do Google: `src/app/api/auth/google/route.ts` inicia,
+  `.../callback/route.ts` troca o code e decide (loga se o e-mail já
+  existe; cria CLIENTE na hora se não existe e o intent era CLIENTE; se o
+  intent era DONO e não existe, manda pra `/cadastro/finalizar-google` só
+  pra pedir o nome da barbearia, via um token assinado de curta duração —
+  `criarTokenGooglePendente`/`lerTokenGooglePendente` em `src/lib/auth.ts`).
+  Upload de imagem (corte e foto de barbeiro) via Supabase Storage: rota
+  `POST /api/upload` (dono/barbeiro autenticado, valida tipo e tamanho),
+  helper `src/lib/storage.ts` (`enviarImagem`), campos `Servico.imagemUrl`
+  e `Usuario.fotoUrl`. Ver regra de negócio 7 sobre por que BARBEIRO não
+  usa login com Google.
+- **Segunda auditoria completa + correções de segurança/lógica**: nova
+  varredura do projeto (rotas de API, frontend, schema/libs) encontrou 36
+  itens; os críticos/altos/médios (13) foram corrigidos nesta leva:
+  secret JWT deixou de ter fallback hardcoded (agora dá `throw` se
+  `JWT_SECRET` não estiver definida); autocadastro de `BARBEIRO` em
+  barbearia arbitrária foi fechado (ver regra de negócio 7) e
+  `GET /api/barbearias/[slug]` parou de vazar o `id` real da barbearia
+  (agora usa `select` explícito); double-booking entre serviços de
+  duração diferente foi fechado envolvendo a checagem+criação do
+  agendamento numa transação Prisma com isolamento `Serializable` (antes
+  só a constraint `@@unique([barbeiroId, data])` existia, que só pega o
+  mesmo instante exato); `GET /api/horarios-livres` ganhou a mesma
+  validação cross-tenant que `POST /api/agendamentos` já tinha; corridas de
+  e-mail duplicado (cadastro de dono, finalizar cadastro Google, criar
+  barbeiro) passaram a devolver 409 tratado em vez de 500 cru, e o cadastro
+  de dono virou uma transação (Barbearia+Usuario) pra não deixar barbearia
+  órfã; upload de imagem passou a validar a assinatura binária real do
+  arquivo, não só o Content-Type declarado (`detectarTipoImagem` em
+  `src/lib/storage.ts`); o token de "finalizar cadastro com Google" ganhou
+  vínculo com um cookie httpOnly gerado no mesmo navegador que fez o login
+  (campo `vinculo`), pra não ser um bearer credential completo só por
+  vazar a URL; checagem de open-redirect no `next` do login Google ficou
+  mais estrita; duração do serviço passou a ser congelada no agendamento
+  (`Agendamento.duracaoMinutos`, ver "Modelo de dados"); marcar um
+  agendamento como `CONCLUIDO` antes da hora acontecer agora dá 409;
+  validação de `Disponibilidade` passou a rejeitar hora inválida e janela
+  invertida (`horaInicio >= horaFim`); `calcularHorariosLivres()` ganhou
+  uma guarda contra duração zero/negativa; notificação de WhatsApp ganhou
+  timeout de 5s pra não segurar a resposta do agendamento. Os itens de
+  baixa prioridade e de frontend/UX (23 no total) ficaram como backlog,
+  não implementados nesta leva — a lista completa está registrada no
+  histórico de conversa, não neste arquivo.
+- **Barbeiro chefe / barbeiro contratado**: ver regra de negócio 6 pro
+  detalhe completo. Resumo das decisões tomadas: um chefe só por
+  barbearia (não múltiplos chefes com equipes separadas); o próprio chefe
+  contrata os barbeiros dele (`POST /api/barbeiros` deixou de ser só do
+  dono); o chefe também atende clientes normalmente, com agenda própria
+  igual qualquer barbeiro, e por cima disso ganha visão de supervisão via
+  `?equipe=1` em `agendamentos`/`financeiro` e `?barbeiroId=` (leitura) em
+  `disponibilidade`. Adicionado também um link "Falar no WhatsApp" na
+  tela de confirmação do agendamento do cliente (`POST /api/agendamentos`
+  agora devolve `barbeiro: {nome, whatsapp}` na resposta), além da
+  notificação automática que já existia. Painel do barbeiro
+  (`barbeiro/page.tsx`) ganhou também um contador de "cortes hoje" (fetch
+  extra em `/api/financeiro?periodo=dia`, sem `equipe`) pra qualquer
+  barbeiro, chefe ou contratado — cobre "quantos cortes hoje/no mês e
+  valor total" que só o contratado via antes de forma incompleta (só
+  tinha o total do mês). Carlos (barbearia-do-ze) foi promovido a chefe
+  como demonstração — nenhum outro barbeiro de teste foi alterado.
+- **Convite de barbeiro por e-mail**: ver regra de negócio 8 pro detalhe
+  completo. `POST /api/barbeiros` deixou de criar a conta na hora — manda
+  um convite por e-mail (Resend, `src/lib/email.ts`) com um link que só
+  cria o `Usuario` depois que a pessoa confirma e escolhe a própria senha
+  (`/convite/aceitar`, `POST /api/barbeiros/aceitar-convite`). Os
+  formulários de "adicionar/contratar barbeiro" em `admin/page.tsx` e
+  `barbeiro/page.tsx` perderam o campo de senha inicial. Testado de ponta
+  a ponta com um token forjado com a `JWT_SECRET` real (sem precisar de
+  uma `RESEND_API_KEY` de verdade pra isso) — falta o usuário configurar
+  uma API key real da Resend em `.env` pra testar o envio do e-mail em si.
 
 ## Ambiente / variáveis necessárias
 
 Arquivo `.env` (baseado em `.env.example`):
 - `DATABASE_URL` — string de conexão do Postgres (Supabase)
-- `JWT_SECRET` — string aleatória para assinar os cookies de sessão
+- `JWT_SECRET` — string aleatória para assinar os cookies de sessão.
+  `src/lib/auth.ts` dá `throw` no carregamento do módulo se isso não
+  estiver definida — de propósito, não existe (nem deve voltar a existir)
+  um valor de fallback hardcoded pra assinatura de sessão.
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` — upload de imagens
+  (cortes/fotos de barbeiro) pro Supabase Storage, bucket `uploads`.
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — login/cadastro com Google
+  (ver `src/app/api/auth/google/*`). Sem isso, os botões "Entrar/Cadastrar
+  com Google" respondem com erro, mas o resto do app funciona normalmente.
+- `RESEND_API_KEY` — envio do e-mail de convite de barbeiro (ver regra de
+  negócio 8, `src/lib/email.ts`). Sem isso, convidar um barbeiro
+  (`POST /api/barbeiros`) responde 502, mas o resto do app funciona
+  normalmente.
 
-Sem essas duas variáveis o projeto não sobe. Rodar `npx prisma migrate dev`
-antes da primeira execução para criar as tabelas no banco.
+Rodar `npx prisma migrate dev` antes da primeira execução para criar as
+tabelas no banco.
+
+**Nunca coloque valores reais dessas variáveis em `.env.example`** — esse
+arquivo é versionado no git (só tem placeholders); os valores reais ficam
+só em `.env`, que não é versionado.

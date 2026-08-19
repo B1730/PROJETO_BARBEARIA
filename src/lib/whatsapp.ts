@@ -18,7 +18,11 @@ export async function notificarNovoAgendamento(params: {
   const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(numero)}&text=${encodeURIComponent(mensagem)}&apikey=${encodeURIComponent(apikey)}`;
 
   try {
-    await fetch(url);
+    // Timeout curto: essa chamada é aguardada antes de responder o POST de
+    // agendamento (ver src/app/api/agendamentos/route.ts) — sem limite, uma
+    // API do CallMeBot lenta ou travada atrasaria (ou, num serverless com
+    // limite de duração, poderia até derrubar) toda resposta de agendamento.
+    await fetch(url, { signal: AbortSignal.timeout(5000) });
   } catch (erro) {
     console.error("Falha ao enviar notificação de WhatsApp:", erro);
   }
