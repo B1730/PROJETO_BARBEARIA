@@ -251,6 +251,13 @@ src/app/
 - Não existe tela pra editar um `Servico` existente pra vincular/desvincular
   um `ServicoBarbeiro` de um contratado específico — hoje isso só acontece
   na criação (quem cria o corte é quem fica dono dele).
+- E-mail de convite/boas-vindas enviado via Gmail pessoal (`src/lib/email.ts`)
+  pode cair na caixa de spam de quem recebe, principalmente na primeira
+  vez que aquele destinatário recebe algo desse remetente — é normal pra
+  envio via conta Gmail pessoal (sem domínio/DNS próprio configurado) e
+  tende a melhorar com o tempo. Não tem correção de código pra isso hoje;
+  se virar problema recorrente, a solução de verdade é migrar pra um
+  serviço de e-mail transacional com domínio verificado.
 
 Se o usuário pedir para avançar em algum desses pontos, pode implementar
 diretamente — são extensões esperadas do sistema, não mudanças de escopo.
@@ -404,6 +411,20 @@ sessão).
   Também adicionados: e-mail de boas-vindas depois que o convite é aceito
   (login + link público da barbearia), link "Já tem conta? Entrar" em
   `/cadastro` e "Não tem conta? Cadastre-se" em `/entrar`.
+- **Mensagens de erro específicas no login por e-mail/senha**:
+  `POST /api/auth/login` deixou de responder um genérico "E-mail ou senha
+  incorretos" pros três casos possíveis — agora diz "Usuário não
+  existente" (404, e-mail sem conta), "Essa conta usa login com Google"
+  (401, conta existe mas não tem senha — foi criada via Google) ou "Senha
+  incorreta" (401, conta e senha existem mas não batem). **Decisão
+  deliberada do usuário**, reconhecidamente trocando uma proteção contra
+  enumeração de e-mail (que existia de propósito) por uma mensagem mais
+  clara — não é um bug corrigido, é uma escolha de produto. Se algum dia
+  quiserem voltar a mensagem genérica por segurança, é só reverter esse
+  arquivo. O login com Google (`Entrar com Google` em `/entrar`) continua
+  criando conta de cliente automaticamente se não existir uma — isso foi
+  perguntado de novo nessa mesma leva e o usuário confirmou que quer
+  manter assim.
 
 ## Ambiente / variáveis necessárias
 
