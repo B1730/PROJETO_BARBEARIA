@@ -1,19 +1,35 @@
-// Envio de e-mail transacional (hoje só usado pro convite de barbeiro) via
-// Resend (resend.com) — API HTTP direta com fetch(), sem instalar o SDK
-// deles como dependência nova, seguindo o mesmo padrão que o resto do
-// projeto usa pra serviço externo (CallMeBot em src/lib/whatsapp.ts,
-// Supabase Storage em src/lib/storage.ts).
-//
-// Remetente de sandbox da própria Resend — funciona sem verificar domínio
-// próprio. Depois de verificar um domínio na conta Resend, dá pra trocar
-// essa constante por um e-mail desse domínio (ex: convites@suabarbearia.com).
-const REMETENTE = "Barbershop SaaS <onboarding@resend.dev>";
+import nodemailer from "nodemailer";
+
+// Envio de e-mail (convite de barbeiro + boas-vindas depois que ele aceita)
+// via Gmail (SMTP, com "senha de app" — precisa de verificação em duas
+// etapas ativada na conta). Escolhido no lugar da Resend porque, sem
+// verificar um domínio próprio, a Resend só deixa mandar e-mail pro e-mail
+// da própria conta — inviabiliza convidar qualquer barbeiro de verdade.
+// Diferente do resto do projeto (CallMeBot, Supabase Storage), aqui não dá
+// pra usar só fetch() — SMTP é um protocolo com estado, precisa de uma
+// biblioteca (nodemailer).
+let transportador: ReturnType<typeof nodemailer.createTransport> | null = null;
+
+function pegarTransportador() {
+  const usuario = process.env.GMAIL_USER;
+  const senha = process.env.GMAIL_APP_PASSWORD;
+  if (!usuario || !senha) {
+    throw new Error("Envio de e-mail não está configurado (faltam GMAIL_USER/GMAIL_APP_PASSWORD)");
+  }
+  if (!transportador) {
+    transportador = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: usuario, pass: senha },
+    });
+  }
+  return transportador;
+}
 
 // Ao contrário de notificarNovoAgendamento() (que falha em silêncio de
 // propósito, por cima de um agendamento que já foi criado), aqui o e-mail
 // é o ÚNICO jeito da pessoa convidada completar o cadastro — uma falha
-// precisa subir como erro de verdade pra quem convidou saber e tentar de
-// novo, em vez de achar que o convite foi enviado.
+// precisa subir um erro de verdade, porque quem convidou precisa saber e
+// tentar de novo.
 export async function enviarEmailConvite(params: {
   para: string;
   nome: string;
@@ -21,33 +37,49 @@ export async function enviarEmailConvite(params: {
   convidadoPorNome: string;
   link: string;
 }): Promise<void> {
-  const chave = process.env.RESEND_API_KEY;
-  if (!chave) {
-    throw new Error("Envio de e-mail não está configurado (falta RESEND_API_KEY)");
-  }
+  const transportador = pegarTransportador();
+  await transportador.sendMail({
+    from: `"${params.barbeariaNome}" <${process.env.GMAIL_USER}>`,
+    to: params.para,
+    subject: `Convite para ${params.barbeariaNome}`,
+    html: `
+      <p>Olá, ${params.nome}!</p>
+      <p><strong>${params.convidadoPorNome}</strong> te convidou pra ser barbeiro em
+      <strong>${params.barbeariaNome}</strong>.</p>
+      <p>Clique no link abaixo pra confirmar seu e-mail e criar sua senha:</p>
+      <p><a href="${params.link}">${params.link}</a></p>
+      <p>Esse link vale por 3 dias.</p>
+    `,
+  });
+}
 
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${chave}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: REMETENTE,
+// Disparado depois que o convite é aceito (conta já criada e a pessoa já
+// logada) — falha em silêncio de propósito, igual notificarNovoAgendamento:
+// é só um "boas-vindas" a mais, não pode derrubar o cadastro que já deu
+// certo.
+export async function enviarEmailBoasVindas(params: {
+  para: string;
+  nome: string;
+  barbeariaNome: string;
+  urlLogin: string;
+  urlBarbearia: string;
+}): Promise<void> {
+  try {
+    const transportador = pegarTransportador();
+    await transportador.sendMail({
+      from: `"${params.barbeariaNome}" <${process.env.GMAIL_USER}>`,
       to: params.para,
-      subject: `Convite para ${params.barbeariaNome}`,
+      subject: `Bem-vindo(a) à ${params.barbeariaNome}!`,
       html: `
         <p>Olá, ${params.nome}!</p>
-        <p><strong>${params.convidadoPorNome}</strong> te convidou pra ser barbeiro em
-        <strong>${params.barbeariaNome}</strong>.</p>
-        <p>Clique no link abaixo pra confirmar seu e-mail e criar sua senha:</p>
-        <p><a href="${params.link}">${params.link}</a></p>
-        <p>Esse link vale por 3 dias.</p>
+        <p>Seu cadastro em <strong>${params.barbeariaNome}</strong> foi confirmado.</p>
+        <p>Pra acessar seu painel quando quiser (agenda, horários, cortes), use:
+        <a href="${params.urlLogin}">${params.urlLogin}</a></p>
+        <p>E esse é o link que seus clientes usam pra agendar horário com você:
+        <a href="${params.urlBarbearia}">${params.urlBarbearia}</a></p>
       `,
-    }),
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Falha ao enviar e-mail de convite (${resp.status}): ${await resp.text()}`);
+    });
+  } catch (erro) {
+    console.error("Falha ao enviar e-mail de boas-vindas:", erro);
   }
 }

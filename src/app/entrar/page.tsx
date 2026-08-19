@@ -85,6 +85,11 @@ function FormularioEntrar() {
           {carregando ? "Entrando..." : "Entrar"}
         </button>
       </form>
+
+      <p className="text-sm text-ink/60 text-center mt-6">
+        Não tem conta?{" "}
+        <a className="underline" href="/cadastro">Cadastre-se</a>
+      </p>
     </main>
   );
 }

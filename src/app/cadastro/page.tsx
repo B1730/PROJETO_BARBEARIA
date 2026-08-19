@@ -75,6 +75,11 @@ function FormularioCadastro() {
           {carregando ? "Criando..." : papel === "DONO" ? "Criar barbearia" : "Criar conta"}
         </button>
       </form>
+
+      <p className="text-sm text-ink/60 text-center mt-6">
+        Já tem conta?{" "}
+        <a className="underline" href="/entrar">Entrar</a>
+      </p>
     </main>
   );
 }

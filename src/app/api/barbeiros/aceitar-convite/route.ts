@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { criarHashSenha, criarSessao, lerTokenConviteBarbeiro } from "@/lib/auth";
+import { enviarEmailBoasVindas } from "@/lib/email";
 
 // GET /api/barbeiros/aceitar-convite?token=...
 // Só valida o token e devolve os dados pra tela mostrar antes de pedir a
@@ -59,6 +60,22 @@ export async function POST(req: NextRequest) {
     });
 
     await criarSessao({ usuarioId: usuario.id, papel: usuario.papel, barbeariaId: usuario.barbeariaId });
+
+    // Boas-vindas com os dois links que ele vai precisar: o painel dele
+    // (login) e a página pública da barbearia (pra divulgar pros próprios
+    // clientes). Falha em silêncio — a conta já foi criada e ele já está
+    // logado, isso é só um extra.
+    const barbearia = await db.barbearia.findUnique({ where: { id: identidade.barbeariaId }, select: { nome: true, slug: true } });
+    if (barbearia) {
+      await enviarEmailBoasVindas({
+        para: identidade.email,
+        nome: identidade.nome,
+        barbeariaNome: barbearia.nome,
+        urlLogin: `${req.nextUrl.origin}/entrar`,
+        urlBarbearia: `${req.nextUrl.origin}/${barbearia.slug}`,
+      });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (erro) {
     if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {

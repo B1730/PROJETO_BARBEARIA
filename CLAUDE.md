@@ -209,8 +209,9 @@ src/app/
    gera um token assinado (`criarTokenConviteBarbeiro`/
    `lerTokenConviteBarbeiro` em `src/lib/auth.ts`, mesmo molde do convite
    pendente do Google, validade 3 dias, nenhuma tabela nova) e manda um
-   e-mail via Resend (`src/lib/email.ts`, API HTTP direta com `fetch()`,
-   sem SDK — mesmo padrão de `whatsapp.ts`/`storage.ts`) com um link pra
+   e-mail via Gmail/SMTP (`src/lib/email.ts`, biblioteca `nodemailer` —
+   único serviço externo do projeto que precisa de uma biblioteca em vez
+   de `fetch()` puro, porque SMTP não é uma API HTTP) com um link pra
    `/convite/aceitar?token=...`. Só quando a pessoa convidada clica,
    confirma e escolhe a própria senha
    (`POST /api/barbeiros/aceitar-convite`) é que a conta passa a existir
@@ -218,8 +219,18 @@ src/app/
    notificação de WhatsApp (`notificarNovoAgendamento`, que falha em
    silêncio de propósito), uma falha ao enviar esse e-mail **precisa**
    virar erro pra quem convidou, porque é o único jeito da pessoa
-   completar o cadastro. Precisa de `RESEND_API_KEY` configurada (ver
-   "Ambiente").
+   completar o cadastro. Precisa de `GMAIL_USER`/`GMAIL_APP_PASSWORD`
+   configuradas (ver "Ambiente"). Depois que a conta é criada, dispara
+   também um e-mail de boas-vindas (`enviarEmailBoasVindas`) com o link
+   de login e o link público da barbearia — esse aqui falha em silêncio
+   (a conta já foi criada, é só um extra).
+   
+   **Por que Gmail e não a Resend**: a primeira versão usava a Resend
+   (API HTTP simples), mas sem verificar um domínio próprio ela só deixa
+   mandar e-mail pro e-mail da própria conta Resend — inviabilizava
+   convidar qualquer barbeiro de verdade. Trocado pra Gmail/SMTP (conta
+   pessoal do usuário + senha de app) por não exigir domínio próprio nem
+   cadastro em serviço novo.
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -380,14 +391,19 @@ sessão).
   como demonstração — nenhum outro barbeiro de teste foi alterado.
 - **Convite de barbeiro por e-mail**: ver regra de negócio 8 pro detalhe
   completo. `POST /api/barbeiros` deixou de criar a conta na hora — manda
-  um convite por e-mail (Resend, `src/lib/email.ts`) com um link que só
-  cria o `Usuario` depois que a pessoa confirma e escolhe a própria senha
-  (`/convite/aceitar`, `POST /api/barbeiros/aceitar-convite`). Os
-  formulários de "adicionar/contratar barbeiro" em `admin/page.tsx` e
-  `barbeiro/page.tsx` perderam o campo de senha inicial. Testado de ponta
-  a ponta com um token forjado com a `JWT_SECRET` real (sem precisar de
-  uma `RESEND_API_KEY` de verdade pra isso) — falta o usuário configurar
-  uma API key real da Resend em `.env` pra testar o envio do e-mail em si.
+  um convite por e-mail com um link que só cria o `Usuario` depois que a
+  pessoa confirma e escolhe a própria senha (`/convite/aceitar`,
+  `POST /api/barbeiros/aceitar-convite`). Os formulários de
+  "adicionar/contratar barbeiro" em `admin/page.tsx` e `barbeiro/page.tsx`
+  perderam o campo de senha inicial. Testado de ponta a ponta com um
+  token forjado com a `JWT_SECRET` real. Implementado primeiro com a
+  Resend, mas trocado pra Gmail/SMTP (`nodemailer`) porque a Resend sem
+  domínio verificado só deixa mandar e-mail pro e-mail da própria conta —
+  não dava pra convidar barbeiro nenhum de verdade (achado só depois do
+  usuário testar em produção). Ver regra de negócio 8 pro porquê completo.
+  Também adicionados: e-mail de boas-vindas depois que o convite é aceito
+  (login + link público da barbearia), link "Já tem conta? Entrar" em
+  `/cadastro` e "Não tem conta? Cadastre-se" em `/entrar`.
 
 ## Ambiente / variáveis necessárias
 
@@ -402,8 +418,12 @@ Arquivo `.env` (baseado em `.env.example`):
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — login/cadastro com Google
   (ver `src/app/api/auth/google/*`). Sem isso, os botões "Entrar/Cadastrar
   com Google" respondem com erro, mas o resto do app funciona normalmente.
-- `RESEND_API_KEY` — envio do e-mail de convite de barbeiro (ver regra de
-  negócio 8, `src/lib/email.ts`). Sem isso, convidar um barbeiro
+- `GMAIL_USER` / `GMAIL_APP_PASSWORD` — envio do e-mail de convite de
+  barbeiro e boas-vindas (ver regra de negócio 8, `src/lib/email.ts`).
+  `GMAIL_APP_PASSWORD` **não é** a senha normal da conta Google — é uma
+  "senha de app" de 16 letras, gerada em
+  `myaccount.google.com/apppasswords` (exige verificação em duas etapas
+  ativada na conta primeiro). Sem essas duas, convidar um barbeiro
   (`POST /api/barbeiros`) responde 502, mas o resto do app funciona
   normalmente.
 
