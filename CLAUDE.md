@@ -245,9 +245,12 @@ src/app/
 - Não existe tela pra editar/desativar um corte já cadastrado ou trocar sua
   foto depois de criado (a API já suporta via `PATCH`/`DELETE` em
   `servicos/[id]`, só falta a interface).
-- Login com Google só cobre CLIENTE (login/cadastro automático) e DONO
-  (cadastro de barbearia). BARBEIRO não usa esse fluxo — ver regra de
-  negócio 7 acima.
+- Login com Google só cobre CLIENTE e DONO. BARBEIRO não usa esse fluxo —
+  ver regra de negócio 7 acima. **Entrar com Google é login estrito**
+  (`/entrar`, `?modo=entrar` — erro "Conta não encontrada" se não
+  existir); **criar conta com Google só na tela de Cadastro**
+  (`/cadastro?papel=CLIENTE` ou `?papel=DONO`, ambos com botão
+  "Cadastrar com Google" agora).
 - Não existe tela pra editar um `Servico` existente pra vincular/desvincular
   um `ServicoBarbeiro` de um contratado específico — hoje isso só acontece
   na criação (quem cria o corte é quem fica dono dele).
@@ -421,10 +424,21 @@ sessão).
   enumeração de e-mail (que existia de propósito) por uma mensagem mais
   clara — não é um bug corrigido, é uma escolha de produto. Se algum dia
   quiserem voltar a mensagem genérica por segurança, é só reverter esse
-  arquivo. O login com Google (`Entrar com Google` em `/entrar`) continua
-  criando conta de cliente automaticamente se não existir uma — isso foi
-  perguntado de novo nessa mesma leva e o usuário confirmou que quer
-  manter assim.
+  arquivo.
+- **Login com Google separado de cadastro com Google**: quando perguntado, o usuário primeiro disse pra manter
+  "Entrar com Google" criando conta de cliente automaticamente — mas ao
+  testar de verdade, percebeu que não era o que queria (selecionar uma
+  conta Google sem cadastro na tela de Entrar voltava pra home sem
+  explicação nenhuma) e pediu pra separar. `GET /api/auth/google` ganhou
+  `?modo=entrar` (usado só pelo link em `/entrar`): se o e-mail não tiver
+  conta, o callback nunca cria nada — redireciona de volta pra `/entrar`
+  com "Conta não encontrada" (usa o mesmo parâmetro `?erro=` que a tela
+  já lia). `/cadastro?papel=CLIENTE` ganhou seu próprio botão "Cadastrar
+  com Google" (antes só o DONO tinha) — é o único lugar que cria conta de
+  cliente via Google agora. Confirma que decisões desse tipo, tomadas
+  antes de testar de verdade, podem mudar depois — vale sempre reconferir
+  com o usuário se o comportamento bateu com a expectativa, em vez de
+  assumir que a resposta da pergunta fechou o assunto.
 
 ## Ambiente / variáveis necessárias
 

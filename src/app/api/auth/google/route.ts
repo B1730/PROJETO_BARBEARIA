@@ -5,11 +5,16 @@ const COOKIE_ESTADO = "google_oauth_estado";
 
 // GET /api/auth/google?next=/barbearia-do-ze
 // GET /api/auth/google?intent=DONO
-// Início do login social. Dois usos:
-// - intent=CLIENTE (padrão): login/cadastro direto de cliente, sem dado extra.
-// - intent=DONO: cadastro de barbearia — como o Google não devolve o nome da
-//   barbearia, se a conta ainda não existir o callback manda pra uma tela
-//   extra pedindo só esse campo (ver /api/auth/google/callback).
+// GET /api/auth/google?modo=entrar
+// Início do login social.
+// - intent=CLIENTE (padrão) ou DONO: usado pela tela de Cadastro — se a
+//   conta ainda não existir, cria (DONO ainda passa por uma telinha extra
+//   pedindo o nome da barbearia, já que o Google não fornece isso).
+// - modo=entrar: usado pela tela de Entrar — login estrito. Se a conta não
+//   existir, NÃO cria nada — o callback manda de volta pra /entrar com um
+//   erro claro. Cadastrar conta nova (com ou sem Google) só na tela de
+//   Cadastro — decisão explícita do usuário, pra separar "entrar" de
+//   "criar conta".
 // BARBEIRO não usa esse fluxo — precisa de um convite/id de barbearia que o
 // Google não tem como fornecer.
 export async function GET(req: NextRequest) {
@@ -20,6 +25,7 @@ export async function GET(req: NextRequest) {
 
   const intentBruto = req.nextUrl.searchParams.get("intent");
   const intent = intentBruto === "DONO" ? "DONO" : "CLIENTE";
+  const modoEntrar = req.nextUrl.searchParams.get("modo") === "entrar";
 
   // Bloqueia não só "//evil.com" mas também "/\evil.com" — alguns
   // navegadores normalizam barra invertida logo após a primeira barra pra
@@ -41,7 +47,7 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("state", estado);
 
   const resposta = NextResponse.redirect(url);
-  resposta.cookies.set(COOKIE_ESTADO, JSON.stringify({ estado, next: proximaRota, intent }), {
+  resposta.cookies.set(COOKIE_ESTADO, JSON.stringify({ estado, next: proximaRota, intent, modoEntrar }), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",

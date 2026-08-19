@@ -47,14 +47,14 @@ function FormularioEntrar() {
       <h1 className="font-display text-2xl mb-6">Entrar</h1>
 
       <a
-        href={`/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+        href={`/api/auth/google?modo=entrar${next ? `&next=${encodeURIComponent(next)}` : ""}`}
         className="btn-secondary w-full flex items-center justify-center gap-2 mb-4"
       >
         Entrar com Google
       </a>
       <p className="text-xs text-ink/40 text-center mb-6">
-        (se você não tem conta, isso cria uma de cliente — pra cadastrar uma
-        barbearia com Google, use a tela de cadastro)
+        (só funciona se você já tem conta — pra criar uma conta nova, use a
+        tela de cadastro)
       </p>
 
       <div className="flex items-center gap-3 mb-6">

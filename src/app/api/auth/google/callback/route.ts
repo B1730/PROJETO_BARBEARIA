@@ -14,8 +14,10 @@ const GOOGLE_JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth
 // assinatura do Google, e:
 // - se já existe conta com esse e-mail, loga como ela (não importa o intent
 //   original — evita duplicar conta de quem já tinha se cadastrado antes).
-// - se não existe e o intent era CLIENTE, cria como cliente na hora (o
-//   Google já dá tudo que precisa: nome e e-mail).
+// - se não existe e veio do modo "entrar" (tela de Entrar), NÃO cria nada —
+//   volta pra /entrar com "Conta não encontrada". Entrar não cadastra.
+// - se não existe e o intent era CLIENTE (veio da tela de Cadastro), cria
+//   como cliente na hora (o Google já dá tudo que precisa: nome e e-mail).
 // - se não existe e o intent era DONO, ainda falta o nome da barbearia — o
 //   Google não fornece isso, então manda pra uma telinha extra
 //   (/cadastro/finalizar-google) só com esse campo.
@@ -34,11 +36,13 @@ export async function GET(req: NextRequest) {
 
   let proximaRota = "/";
   let intent: "CLIENTE" | "DONO" = "CLIENTE";
+  let modoEntrar = false;
   try {
-    const { estado, next, intent: intentSalvo } = JSON.parse(cookieBruto);
+    const { estado, next, intent: intentSalvo, modoEntrar: modoSalvo } = JSON.parse(cookieBruto);
     if (estado !== state) return erroRedirect("Sessão de login inválida, tente de novo");
     if (typeof next === "string") proximaRota = next;
     if (intentSalvo === "DONO") intent = "DONO";
+    if (modoSalvo === true) modoEntrar = true;
   } catch {
     return erroRedirect("Sessão de login inválida, tente de novo");
   }
@@ -79,6 +83,10 @@ export async function GET(req: NextRequest) {
   const usuario = await db.usuario.findUnique({ where: { email } });
 
   if (!usuario) {
+    if (modoEntrar) {
+      return erroRedirect("Conta não encontrada — cadastre-se primeiro");
+    }
+
     if (intent === "DONO") {
       // "vinculo" amarra o token (que vai numa URL, então pode vazar por
       // histórico do navegador ou log de proxy) ao navegador que realmente
