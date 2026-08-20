@@ -24,6 +24,15 @@ const INTERVALO_POLLING_MS = 8000;
 function hojeBrasil() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
+function diaBrasilDe(dataIso: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(dataIso));
+}
+function formatarDataCurta(dataIso: string) {
+  return new Date(dataIso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
+}
+function formatarHora(dataIso: string) {
+  return new Date(dataIso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+}
 
 type Agendamento = {
   id: string; status: string; data: string;
@@ -42,6 +51,7 @@ export default function PainelBarbeiro() {
   const router = useRouter();
   const [pendentes, setPendentes] = useState<Agendamento[]>([]);
   const [agendaHoje, setAgendaHoje] = useState<Agendamento[]>([]);
+  const [proximos, setProximos] = useState<Agendamento[]>([]);
   const [disponibilidades, setDisponibilidades] = useState<Disponibilidade[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [financeiro, setFinanceiro] = useState<{ totalGeral: number; totalDeAtendimentos: number } | null>(null);
@@ -69,6 +79,9 @@ export default function PainelBarbeiro() {
   const [novoContratadoNome, setNovoContratadoNome] = useState("");
   const [novoContratadoEmail, setNovoContratadoEmail] = useState("");
   const [salvandoContratado, setSalvandoContratado] = useState(false);
+  const [barbeiroSelecionado, setBarbeiroSelecionado] = useState<BarbeiroEquipe | null>(null);
+  const [agendaSelecionado, setAgendaSelecionado] = useState<Agendamento[]>([]);
+  const [carregandoSelecionado, setCarregandoSelecionado] = useState(false);
 
   async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
     const form = new FormData();
@@ -90,21 +103,22 @@ export default function PainelBarbeiro() {
 
   async function carregarTudo(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
-    const [pendResp, hojeResp, dispResp, finResp, finHojeResp, servResp] = await Promise.all([
+    const [pendResp, hojeResp, confResp, dispResp, finResp, finHojeResp, servResp] = await Promise.all([
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}`),
+      fetch("/api/agendamentos?status=CONFIRMADO"),
       fetch("/api/disponibilidade"),
       fetch("/api/financeiro?periodo=mes"),
       fetch("/api/financeiro?periodo=dia"),
       fetch("/api/servicos"),
     ]);
 
-    const semAcesso = [pendResp, hojeResp, dispResp, finResp, finHojeResp, servResp].some((r) => r.status === 401 || r.status === 403);
+    const semAcesso = [pendResp, hojeResp, confResp, dispResp, finResp, finHojeResp, servResp].some((r) => r.status === 401 || r.status === 403);
     if (semAcesso) {
       router.push("/entrar");
       return;
     }
-    if (!pendResp.ok || !hojeResp.ok || !dispResp.ok || !finResp.ok || !finHojeResp.ok || !servResp.ok) {
+    if (!pendResp.ok || !hojeResp.ok || !confResp.ok || !dispResp.ok || !finResp.ok || !finHojeResp.ok || !servResp.ok) {
       if (mostrarSpinner) {
         setErro("Não foi possível carregar os dados do painel.");
         setCarregando(false);
@@ -112,15 +126,28 @@ export default function PainelBarbeiro() {
       return;
     }
 
-    const [pend, hoje, disp, fin, finHoje, serv] = await Promise.all([
-      pendResp.json(), hojeResp.json(), dispResp.json(), finResp.json(), finHojeResp.json(), servResp.json(),
+    const [pend, hoje, conf, disp, fin, finHoje, serv] = await Promise.all([
+      pendResp.json(), hojeResp.json(), confResp.json(), dispResp.json(), finResp.json(), finHojeResp.json(), servResp.json(),
     ]);
-    setPendentes(pend.agendamentos || []);
+    const pendentesLista: Agendamento[] = pend.agendamentos || [];
+    setPendentes(pendentesLista);
     setAgendaHoje(hoje.agendamentos || []);
     setDisponibilidades(disp.disponibilidades || []);
     setFinanceiro(fin);
     setCortesHoje(finHoje.totalDeAtendimentos ?? null);
     setServicos(serv.servicos || []);
+
+    // Próximos agendamentos (dias depois de hoje) — pra saber o que vem
+    // por aí sem precisar ficar trocando de dia. "Agendamentos de hoje"
+    // já cobre o dia de hoje, então aqui só entra o que é de outro dia.
+    const confirmadosLista: Agendamento[] = conf.agendamentos || [];
+    const hojeStr = hojeBrasil();
+    const proximosLista = [...pendentesLista, ...confirmadosLista]
+      .filter((ag) => diaBrasilDe(ag.data) > hojeStr)
+      .sort((a, b) => a.data.localeCompare(b.data))
+      .slice(0, 10);
+    setProximos(proximosLista);
+
     if (mostrarSpinner) setCarregando(false);
   }
 
@@ -140,6 +167,34 @@ export default function PainelBarbeiro() {
   }
 
   useEffect(() => { if (ehChefe) carregarEquipe(); }, [ehChefe, equipePeriodo]);
+
+  // Agenda de um barbeiro contratado específico — só os agendamentos que
+  // ainda não aconteceram (pendente/confirmado), pra saber o que ele tem
+  // marcado sem precisar mexer no filtro de período. Clicar de novo no
+  // mesmo barbeiro fecha a visualização.
+  async function verAgendaDoBarbeiro(b: BarbeiroEquipe) {
+    if (barbeiroSelecionado?.id === b.id) {
+      setBarbeiroSelecionado(null);
+      setAgendaSelecionado([]);
+      return;
+    }
+    setBarbeiroSelecionado(b);
+    setCarregandoSelecionado(true);
+    const [pResp, cResp] = await Promise.all([
+      fetch(`/api/agendamentos?barbeiroId=${b.id}&status=PENDENTE`),
+      fetch(`/api/agendamentos?barbeiroId=${b.id}&status=CONFIRMADO`),
+    ]);
+    setCarregandoSelecionado(false);
+    if (!pResp.ok || !cResp.ok) {
+      setErro("Não foi possível carregar a agenda desse barbeiro");
+      return;
+    }
+    const [p, c] = await Promise.all([pResp.json(), cResp.json()]);
+    const lista: Agendamento[] = [...(p.agendamentos || []), ...(c.agendamentos || [])].sort((a, b2) =>
+      a.data.localeCompare(b2.data)
+    );
+    setAgendaSelecionado(lista);
+  }
 
   async function contratarBarbeiro(e: React.FormEvent) {
     e.preventDefault();
@@ -316,6 +371,24 @@ export default function PainelBarbeiro() {
       </section>
 
       <section>
+        <h2 className="font-medium mb-3">Próximos agendamentos</h2>
+        {proximos.length === 0 ? (
+          <p className="text-sm text-ink/50">Nada marcado além de hoje, por enquanto.</p>
+        ) : (
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+            {proximos.map((ag) => (
+              <div key={ag.id} className="card shrink-0 w-48">
+                <p className="text-xs text-ink/50 mb-1">{formatarDataCurta(ag.data)} · {formatarHora(ag.data)}</p>
+                <p className="font-medium text-sm">{ag.cliente.nome}</p>
+                <p className="text-sm text-ink/60">{ag.servico.nome}</p>
+                <p className={`text-xs mt-1 ${COR_STATUS[ag.status] || ""}`}>{ROTULO_STATUS[ag.status] || ag.status}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
         <h2 className="font-medium mb-3">Pedidos aguardando confirmação</h2>
         {pendentes.length === 0 && <p className="text-sm text-ink/50">Nenhum pedido pendente.</p>}
         <div className="space-y-3">
@@ -454,14 +527,39 @@ export default function PainelBarbeiro() {
 
           <div className="mb-4">
             <h3 className="font-medium mb-2">Barbeiros contratados</h3>
+            <p className="text-xs text-ink/50 mb-2">Clique num barbeiro pra ver os agendamentos dele que ainda não aconteceram.</p>
             {equipeBarbeiros.filter((b) => !b.ehChefe).length === 0 && (
               <p className="text-sm text-ink/50 mb-2">Nenhum barbeiro contratado ainda.</p>
             )}
             <div className="space-y-2">
               {equipeBarbeiros.filter((b) => !b.ehChefe).map((b) => (
-                <div key={b.id} className="card flex justify-between">
-                  <span>{b.nome}</span>
-                  <span className="text-sm text-ink/50">{b.email}</span>
+                <div key={b.id}>
+                  <button
+                    onClick={() => verAgendaDoBarbeiro(b)}
+                    className={`card w-full flex justify-between text-left ${barbeiroSelecionado?.id === b.id ? "border-accent" : ""}`}
+                  >
+                    <span>{b.nome}</span>
+                    <span className="text-sm text-ink/50">{b.email}</span>
+                  </button>
+                  {barbeiroSelecionado?.id === b.id && (
+                    <div className="card mt-1 space-y-2">
+                      {carregandoSelecionado ? (
+                        <p className="text-sm text-ink/50">Carregando...</p>
+                      ) : agendaSelecionado.length === 0 ? (
+                        <p className="text-sm text-ink/50">{b.nome} não tem agendamento pendente ou confirmado.</p>
+                      ) : (
+                        agendaSelecionado.map((ag) => (
+                          <div key={ag.id} className="flex justify-between items-center border-t border-line pt-2 first:border-t-0 first:pt-0">
+                            <div>
+                              <p className="font-medium text-sm">{ag.cliente.nome} — {ag.servico.nome}</p>
+                              <p className="text-xs text-ink/60">{formatarDataCurta(ag.data)} · {formatarHora(ag.data)}</p>
+                            </div>
+                            <span className={`text-xs ${COR_STATUS[ag.status] || ""}`}>{ROTULO_STATUS[ag.status] || ag.status}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

@@ -513,6 +513,18 @@ sessão).
   se o cliente já está logado (com botão "Sair") ou, se não, os links
   "Entrar"/"Cadastre-se" direto — antes só apareciam depois de tentar
   agendar e tomar erro de permissão.
+- **Carrossel de próximos agendamentos + chefe vê agenda de um contratado
+  específico**: painel do barbeiro (`barbeiro/page.tsx`) ganhou uma seção
+  "Próximos agendamentos" (PENDENTE/CONFIRMADO em dias depois de hoje —
+  "Agendamentos de hoje" já cobre o dia de hoje) num carrossel horizontal
+  (`overflow-x-auto`), reaproveitando os mesmos `GET /api/agendamentos`
+  já usados noutras partes do painel. `GET /api/agendamentos` ganhou um
+  parâmetro `?barbeiroId=<id>` — chefe (ou dono) consegue ver os
+  agendamentos ainda não realizados de UM colega específico (mesmo padrão
+  de permissão já usado em `?barbeiroId=` de `disponibilidade`); barbeiro
+  comum tentando ver de outro colega continua dando 403. Na seção
+  "Barbeiros contratados" do chefe, clicar num nome agora abre/fecha a
+  agenda (pendente + confirmado) daquele contratado especificamente.
 
 ## Ambiente / variáveis necessárias
 

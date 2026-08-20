@@ -124,8 +124,11 @@ export async function POST(req: NextRequest) {
 //   barbearia, vê os de todos os barbeiros (mesmo escopo que o DONO já
 //   tem) — sem o parâmetro (ou se não for chefe), nada muda, inclusive
 //   pro próprio chefe: ele continua vendo só os PRÓPRIOS pedidos
-//   pendentes na seção de confirmar/recusar.
-// - DONO vê todos da barbearia
+//   pendentes na seção de confirmar/recusar. Com ?barbeiroId=<outro>, o
+//   chefe (ou dono) consegue ver só a agenda de UM colega específico —
+//   usado pelo painel do chefe quando clica num barbeiro contratado.
+// - DONO vê todos da barbearia (ou só de um barbeiro específico, com
+//   ?barbeiroId=)
 // - CLIENTE vê os próprios (histórico)
 export async function GET(req: NextRequest) {
   const sessao = await exigirSessao();
@@ -142,17 +145,27 @@ export async function GET(req: NextRequest) {
   }
 
   const equipe = req.nextUrl.searchParams.get("equipe") === "1";
+  const barbeiroIdParam = req.nextUrl.searchParams.get("barbeiroId");
 
   const where: any = {};
-  if (sessao.papel === "BARBEIRO") {
-    where.barbeiroId = sessao.usuarioId;
-    if (equipe && (await sessaoTemPrivilegioDeChefe(sessao))) {
-      delete where.barbeiroId;
-      where.barbeariaId = sessao.barbeariaId;
-    }
-  }
+  if (sessao.papel === "BARBEIRO") where.barbeiroId = sessao.usuarioId;
   if (sessao.papel === "DONO") where.barbeariaId = sessao.barbeariaId;
   if (sessao.papel === "CLIENTE") where.clienteId = sessao.usuarioId;
+
+  if (barbeiroIdParam && barbeiroIdParam !== sessao.usuarioId) {
+    if (!(await sessaoTemPrivilegioDeChefe(sessao))) {
+      return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
+    }
+    const alvo = await db.usuario.findUnique({ where: { id: barbeiroIdParam } });
+    if (!alvo || alvo.papel !== "BARBEIRO" || alvo.barbeariaId !== sessao.barbeariaId) {
+      return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
+    }
+    where.barbeiroId = barbeiroIdParam;
+    delete where.barbeariaId;
+  } else if (sessao.papel === "BARBEIRO" && equipe && (await sessaoTemPrivilegioDeChefe(sessao))) {
+    delete where.barbeiroId;
+    where.barbeariaId = sessao.barbeariaId;
+  }
   if (statusFiltro) where.status = statusFiltro;
   if (dataFiltro) {
     // Dia inteiro em America/Sao_Paulo (-03:00), mesmo critério usado em
