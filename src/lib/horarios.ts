@@ -69,18 +69,22 @@ export async function calcularHorariosLivres(params: {
   // Diferencia "o barbeiro não atende nesse dia da semana" (dado que falta)
   // de "atende, mas não sobrou horário livre" — pro cliente entender por
   // que a lista veio vazia em vez de parecer que o sistema quebrou.
-  if (disponibilidades.length === 0) return { horarios: [], semExpediente: true };
+  if (disponibilidades.length === 0) return { horarios: [], ocupados: [], semExpediente: true };
   // Guarda defensiva: com duração 0 (ou negativa) o cursor do loop abaixo
   // nunca avança e a requisição trava para sempre. Hoje as rotas que chamam
   // essa função já validam duracaoMinutos > 0 via zod, mas essa função é
   // citada no CLAUDE.md como "a lógica mais delicada do sistema" — não deve
   // depender só da validação de quem chama.
-  if (duracaoMinutos <= 0) return { horarios: [], semExpediente: false };
+  if (duracaoMinutos <= 0) return { horarios: [], ocupados: [], semExpediente: false };
 
-  const ocupados = await buscarAgendamentosOcupados(db, { barbeiroId, data });
+  const agendamentosOcupados = await buscarAgendamentosOcupados(db, { barbeiroId, data });
 
   const agora = new Date();
   const slotsLivres: string[] = [];
+  // Horários dentro do expediente que já têm agendamento — o cliente
+  // continua vendo esses horários na tela (cinza, sem poder clicar), em
+  // vez deles simplesmente desaparecerem da lista.
+  const slotsOcupados: string[] = [];
 
   for (const janela of disponibilidades) {
     const [horaIni, minIni] = janela.horaInicio.split(":").map(Number);
@@ -96,17 +100,18 @@ export async function calcularHorariosLivres(params: {
 
     while (cursor.getTime() + duracaoMinutos * 60000 <= fimJanela.getTime()) {
       const fimDoSlot = new Date(cursor.getTime() + duracaoMinutos * 60000);
+      const horaFormatada = cursor.toLocaleTimeString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }); // "14:30"
 
-      // Não oferece horário que já passou (só é relevante quando "data" é hoje).
-      if (!conflitaComOcupados(cursor, fimDoSlot, ocupados) && cursor.getTime() > agora.getTime()) {
-        slotsLivres.push(
-          cursor.toLocaleTimeString("pt-BR", {
-            timeZone: "America/Sao_Paulo",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          }) // "14:30"
-        );
+      if (conflitaComOcupados(cursor, fimDoSlot, agendamentosOcupados)) {
+        slotsOcupados.push(horaFormatada);
+      } else if (cursor.getTime() > agora.getTime()) {
+        // Não oferece horário que já passou (só é relevante quando "data" é hoje).
+        slotsLivres.push(horaFormatada);
       }
 
       cursor = new Date(cursor.getTime() + duracaoMinutos * 60000);
@@ -115,5 +120,9 @@ export async function calcularHorariosLivres(params: {
 
   // Janelas de disponibilidade sobrepostas no mesmo dia podem gerar o mesmo
   // horário mais de uma vez.
-  return { horarios: Array.from(new Set(slotsLivres)).sort(), semExpediente: false };
+  return {
+    horarios: Array.from(new Set(slotsLivres)).sort(),
+    ocupados: Array.from(new Set(slotsOcupados)).sort(),
+    semExpediente: false,
+  };
 }

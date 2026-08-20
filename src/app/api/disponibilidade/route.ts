@@ -11,11 +11,19 @@ const horaValida = (valor: string) => {
   return hora >= 0 && hora <= 23 && minuto >= 0 && minuto <= 59;
 };
 
+// Só de meia em meia hora (minuto 00 ou 30) — mantém os horários que o
+// cliente vê batendo certinho com a grade de 30min (09:00, 09:30, 10:00...)
+// em vez de janelas com início/fim "quebrado" tipo 09:15.
+const horaRedonda = (valor: string) => {
+  const minuto = Number(valor.split(":")[1]);
+  return minuto === 0 || minuto === 30;
+};
+
 const schema = z
   .object({
     diaDaSemana: z.number().int().min(0).max(6),
-    horaInicio: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida"),
-    horaFim: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida"),
+    horaInicio: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida").refine(horaRedonda, "Hora precisa ser em ponto ou meia (ex: 09:00, 09:30)"),
+    horaFim: z.string().regex(/^\d{2}:\d{2}$/).refine(horaValida, "Hora inválida").refine(horaRedonda, "Hora precisa ser em ponto ou meia (ex: 18:00, 18:30)"),
   })
   // Comparação de string funciona porque o formato é sempre "HH:MM" com
   // zero à esquerda. Sem isso, uma janela invertida (ex.: início 18:00, fim

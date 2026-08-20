@@ -439,6 +439,23 @@ sessão).
   antes de testar de verdade, podem mudar depois — vale sempre reconferir
   com o usuário se o comportamento bateu com a expectativa, em vez de
   assumir que a resposta da pergunta fechou o assunto.
+- **Horários ocupados aparecem cinza em vez de sumir + mensagem clara de
+  403 no agendamento**: `calcularHorariosLivres()` (`src/lib/horarios.ts`)
+  passou a devolver também `ocupados: string[]` (horários dentro do
+  expediente que já têm agendamento), além do `horarios` (livres) que já
+  existia — `GET /api/horarios-livres` repassa os dois. `[slug]/page.tsx`
+  agora desenha os dois juntos, ordenados, com os ocupados desabilitados
+  e acinzentados (antes só sumiam da lista, o que confundia o cliente
+  sobre o que realmente estava disponível). Também corrigido: tentar
+  agendar logado como `DONO`/`BARBEIRO` (contas que não são de cliente)
+  dava um 403 com mensagem genérica ("Sem permissão") sem explicar por
+  quê — agora mostra uma mensagem específica dizendo que é preciso entrar
+  com uma conta de cliente.
+- **Disponibilidade só de meia em meia hora**: `POST /api/disponibilidade`
+  passou a exigir que `horaInicio`/`horaFim` sejam em ponto ou meia
+  (minuto 00 ou 30) — os `<input type="time">` em `barbeiro/page.tsx`
+  ganharam `step={1800}` (30min) pra já guiar isso na interface. Evita
+  janelas de expediente com início/fim "quebrado" (ex: 09:15).
 
 ## Ambiente / variáveis necessárias
 

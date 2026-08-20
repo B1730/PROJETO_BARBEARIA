@@ -16,6 +16,7 @@ export default function PaginaBarbearia() {
   const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   const [data, setData] = useState("");
   const [horarios, setHorarios] = useState<string[]>([]);
+  const [ocupados, setOcupados] = useState<string[]>([]);
   const [semExpediente, setSemExpediente] = useState(false);
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
@@ -42,6 +43,7 @@ export default function PaginaBarbearia() {
       .then((d) => {
         if (!cancelado) {
           setHorarios(d.horarios || []);
+          setOcupados(d.ocupados || []);
           setSemExpediente(!!d.semExpediente);
           setCarregandoHorarios(false);
         }
@@ -68,6 +70,10 @@ export default function PaginaBarbearia() {
     if (!resp.ok) {
       if (resp.status === 401) {
         setMensagem("Você precisa criar uma conta ou entrar antes de agendar.");
+      } else if (resp.status === 403) {
+        setMensagem(
+          "Essa conta é de dono ou barbeiro, não de cliente. Saia e entre (ou crie uma conta) com um e-mail de cliente pra agendar."
+        );
       } else {
         setMensagem(dados.erro || "Não foi possível agendar");
       }
@@ -145,22 +151,36 @@ export default function PaginaBarbearia() {
           {data && (
             <div className="flex flex-wrap gap-2">
               {carregandoHorarios && <p className="text-sm text-ink/50">Carregando horários...</p>}
-              {!carregandoHorarios && horarios.length === 0 && (
+              {!carregandoHorarios && horarios.length === 0 && ocupados.length === 0 && (
                 <p className="text-sm text-ink/50">
                   {semExpediente
                     ? "Esse profissional não atende nesse dia da semana. Escolha outra data."
                     : "Nenhum horário livre neste dia — todos os horários já foram preenchidos."}
                 </p>
               )}
-              {!carregandoHorarios && horarios.map((h) => (
-                <button
-                  key={h}
-                  onClick={() => setHoraEscolhida(h)}
-                  className={`px-3 py-2 rounded-md border ${horaEscolhida === h ? "bg-accent text-white border-accent" : "border-line"}`}
-                >
-                  {h}
-                </button>
-              ))}
+              {!carregandoHorarios &&
+                [...horarios.map((h) => ({ hora: h, livre: true })), ...ocupados.map((h) => ({ hora: h, livre: false }))]
+                  .sort((a, b) => a.hora.localeCompare(b.hora))
+                  .map(({ hora, livre }) =>
+                    livre ? (
+                      <button
+                        key={hora}
+                        onClick={() => setHoraEscolhida(hora)}
+                        className={`px-3 py-2 rounded-md border ${horaEscolhida === hora ? "bg-accent text-white border-accent" : "border-line"}`}
+                      >
+                        {hora}
+                      </button>
+                    ) : (
+                      <button
+                        key={hora}
+                        disabled
+                        title="Já tem agendamento nesse horário"
+                        className="px-3 py-2 rounded-md border border-line bg-line/40 text-ink/30 cursor-not-allowed"
+                      >
+                        {hora}
+                      </button>
+                    )
+                  )}
             </div>
           )}
         </section>

@@ -348,8 +348,8 @@ export default function PainelBarbeiro() {
           <select className="input" value={novoDia} onChange={(e) => setNovoDia(Number(e.target.value))}>
             {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
           </select>
-          <input type="time" className="input" value={novaHoraIni} onChange={(e) => setNovaHoraIni(e.target.value)} />
-          <input type="time" className="input" value={novaHoraFim} onChange={(e) => setNovaHoraFim(e.target.value)} />
+          <input type="time" step={1800} className="input" value={novaHoraIni} onChange={(e) => setNovaHoraIni(e.target.value)} />
+          <input type="time" step={1800} className="input" value={novaHoraFim} onChange={(e) => setNovaHoraFim(e.target.value)} />
           <button className="btn-primary" disabled={salvandoDisponibilidade}>
             {salvandoDisponibilidade ? "Adicionando..." : "Adicionar"}
           </button>
