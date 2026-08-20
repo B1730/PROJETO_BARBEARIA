@@ -164,6 +164,17 @@ model Agendamento {
   duracaoMinutos Int?
   status        StatusAgendamento @default(PENDENTE)
 
+  // Pedido de cancelamento feito pelo CLIENTE (ver POST
+  // /api/agendamentos/[id]/cancelar) — não muda o status sozinho: o
+  // agendamento continua PENDENTE/CONFIRMADO (e continua ocupando o
+  // horário normalmente, ver calcularHorariosLivres) até o barbeiro
+  // decidir. cancelamentoSolicitadoEm nulo = nenhum pedido em aberto.
+  // O barbeiro então confirma (status vira CANCELADO, ver
+  // TRANSICOES_PERMITIDAS) ou mantém o agendamento (os dois campos voltam
+  // a nulo, sem mudar o status) depois de conversar com o cliente.
+  cancelamentoSolicitadoEm DateTime?
+  motivoCancelamento       String?
+
   criadoEm      DateTime          @default(now())
   atualizadoEm  DateTime          @updatedAt
 

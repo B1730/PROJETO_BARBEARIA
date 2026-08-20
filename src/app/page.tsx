@@ -22,9 +22,15 @@ export default async function Home() {
 
       <nav className="relative max-w-5xl mx-auto px-6 py-6 flex justify-between items-center">
         <span className="font-display text-lg">Barbearia Online</span>
-        <Link href="/entrar" className="text-sm text-ink/70 hover:text-ink transition-colors">
-          Entrar
-        </Link>
+        {sessao?.papel === "CLIENTE" ? (
+          <Link href="/meus-agendamentos" className="text-sm text-ink/70 hover:text-ink transition-colors">
+            Meus agendamentos
+          </Link>
+        ) : (
+          <Link href="/entrar" className="text-sm text-ink/70 hover:text-ink transition-colors">
+            Entrar
+          </Link>
+        )}
       </nav>
 
       <div className="relative max-w-3xl mx-auto px-6 pt-14 pb-24">

@@ -38,6 +38,7 @@ type Agendamento = {
   id: string; status: string; data: string;
   cliente: { nome: string }; servico: { nome: string }; precoCobrado: string;
   barbeiro?: { id: string; nome: string };
+  cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
 };
 type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type Servico = {
@@ -50,6 +51,7 @@ type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro
 export default function PainelBarbeiro() {
   const router = useRouter();
   const [pendentes, setPendentes] = useState<Agendamento[]>([]);
+  const [pedidosCancelamento, setPedidosCancelamento] = useState<Agendamento[]>([]);
   const [agendaHoje, setAgendaHoje] = useState<Agendamento[]>([]);
   const [proximos, setProximos] = useState<Agendamento[]>([]);
   const [disponibilidades, setDisponibilidades] = useState<Disponibilidade[]>([]);
@@ -148,6 +150,15 @@ export default function PainelBarbeiro() {
       .slice(0, 10);
     setProximos(proximosLista);
 
+    // Pedidos de cancelamento do cliente ficam em aberto em qualquer
+    // agendamento PENDENTE ou CONFIRMADO (ver POST /api/agendamentos/[id]/cancelar) —
+    // não é um status à parte, é uma marca em cima do que já existe.
+    setPedidosCancelamento(
+      [...pendentesLista, ...confirmadosLista]
+        .filter((ag) => ag.cancelamentoSolicitadoEm)
+        .sort((a, b) => a.data.localeCompare(b.data))
+    );
+
     if (mostrarSpinner) setCarregando(false);
   }
 
@@ -241,6 +252,27 @@ export default function PainelBarbeiro() {
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível responder esse pedido");
+      return;
+    }
+    carregarTudo(false);
+  }
+
+  // Decisão do barbeiro sobre um pedido de cancelamento do cliente: ou
+  // confirma (o agendamento vira CANCELADO de vez) ou recusa (mantém o
+  // agendamento como estava, sem mudar o status) — depois de conversar
+  // com o cliente pra entender o motivo.
+  async function decidirCancelamento(id: string, confirmar: boolean) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(confirmar ? { status: "CANCELADO" } : { recusarCancelamento: true }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível processar esse pedido de cancelamento");
       return;
     }
     carregarTudo(false);
@@ -412,6 +444,36 @@ export default function PainelBarbeiro() {
           ))}
         </div>
       </section>
+
+      {pedidosCancelamento.length > 0 && (
+        <section>
+          <h2 className="font-medium mb-3">Pedidos de cancelamento</h2>
+          <div className="space-y-3">
+            {pedidosCancelamento.map((ag) => (
+              <div key={ag.id} className="card border-amber-300">
+                <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                <p className="text-sm text-ink/60">
+                  {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                </p>
+                <p className="text-sm text-ink/60 mt-1">
+                  Motivo: {ag.motivoCancelamento || "não informado"}
+                </p>
+                <p className="text-xs text-ink/50 mt-1">
+                  Fale com o cliente pra entender o motivo antes de decidir.
+                </p>
+                <div className="flex gap-2 mt-3">
+                  <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirCancelamento(ag.id, true)}>
+                    {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
+                  </button>
+                  <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => decidirCancelamento(ag.id, false)}>
+                    {respondendoId === ag.id ? "..." : "Manter agendamento"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="font-medium mb-3">Minha disponibilidade</h2>

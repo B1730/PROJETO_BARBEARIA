@@ -92,8 +92,10 @@ src/lib/
                         horários livres. Essa é a lógica mais delicada do sistema — qualquer
                         mudança aqui afeta diretamente se um cliente consegue marcar horário
                         duplicado ou não.
-  whatsapp.ts        → notificarNovoAgendamento(): dispara mensagem via CallMeBot pro
-                        barbeiro quando um cliente cria um agendamento; falha em silêncio
+  whatsapp.ts        → notificarNovoAgendamento()/notificarSolicitacaoCancelamento()/
+                        notificarCancelamentoConfirmado(): disparam mensagem via CallMeBot
+                        pro barbeiro (criação, pedido de cancelamento do cliente e
+                        confirmação final); todas falham em silêncio
 
 src/components/
   Cabecalho.tsx      → cabeçalho compartilhado dos painéis logados (barbeiro/dono):
@@ -105,10 +107,13 @@ src/app/
   entrar/page.tsx    → login (qualquer papel)
   cadastro/page.tsx  → cadastro — usa ?papel=DONO (padrão, cria barbearia) ou ?papel=CLIENTE
   [slug]/page.tsx    → página pública da barbearia (fluxo do cliente: corte → barbeiro → horário)
-  barbeiro/page.tsx  → painel do barbeiro (agenda de hoje, pedidos pendentes, disponibilidade,
-                        cortes próprios) — atualiza sozinho a cada 8s (polling)
+  barbeiro/page.tsx  → painel do barbeiro (agenda de hoje, pedidos pendentes, pedidos de
+                        cancelamento, disponibilidade, cortes próprios) — atualiza sozinho
+                        a cada 8s (polling)
   barbeiro/perfil/page.tsx → barbeiro cadastra o próprio WhatsApp/apikey do CallMeBot
   admin/page.tsx     → painel do dono (barbeiros, cortes/preços, faturamento)
+  meus-agendamentos/page.tsx → cliente vê o próprio histórico de agendamentos (todas as
+                        barbearias) e pede cancelamento de um PENDENTE/CONFIRMADO
 
   api/
     auth/cadastro, auth/login, auth/logout, auth/sessao (GET, devolve usuário + barbearia logados)
@@ -117,7 +122,8 @@ src/app/
     barbeiros                 → dono lista/cadastra barbeiros
     disponibilidade, disponibilidade/[id]  → barbeiro gerencia a própria agenda
     horarios-livres           → GET público, usa calcularHorariosLivres()
-    agendamentos, agendamentos/[id]  → cliente pede; barbeiro confirma/recusa (PATCH)
+    agendamentos, agendamentos/[id]  → cliente pede; barbeiro confirma/recusa/cancela (PATCH)
+    agendamentos/[id]/cancelar → POST, cliente pede cancelamento (ver regra de negócio 9)
     financeiro                 → relatório por período, filtrado por papel (dono vê tudo da
                                   barbearia agrupado por barbeiro; barbeiro vê só o próprio)
     perfil                     → GET/PATCH, barbeiro edita o próprio whatsapp/callmebotApiKey
@@ -144,6 +150,8 @@ src/app/
   dois muda se o dono alterar o serviço depois. `duracaoMinutos` é nullable
   só porque foi adicionado depois de já existirem agendamentos; o cálculo
   de horário livre cai de volta pra duração atual do serviço quando é nulo.
+  `cancelamentoSolicitadoEm`/`motivoCancelamento` (ambos nullable) guardam
+  um pedido de cancelamento do cliente em aberto — ver regra de negócio 9.
 - `Usuario.senhaHash` é nullable: contas criadas via "Entrar com Google"
   não têm senha. `Usuario.fotoUrl` guarda a foto de perfil (usada pelo
   barbeiro), também no Supabase Storage.
@@ -233,6 +241,30 @@ src/app/
    convidar qualquer barbeiro de verdade. Trocado pra Gmail/SMTP (conta
    pessoal do usuário + senha de app) por não exigir domínio próprio nem
    cadastro em serviço novo.
+9. **Cancelamento de agendamento pelo cliente é um pedido, não um
+   cancelamento direto** — `POST /api/agendamentos/[id]/cancelar` (só o
+   CLIENTE dono do agendamento, `PENDENTE` ou `CONFIRMADO`) não muda o
+   `status` na hora: só marca `Agendamento.cancelamentoSolicitadoEm`
+   (+ `motivoCancelamento` opcional) e avisa o barbeiro por WhatsApp
+   (`notificarSolicitacaoCancelamento`, mesmo padrão do
+   `notificarNovoAgendamento`). O agendamento continua `PENDENTE`/
+   `CONFIRMADO` e ocupando o horário normalmente enquanto o pedido está
+   em aberto — de propósito, pra dar tempo do barbeiro falar com o
+   cliente e entender o motivo antes de decidir (não existe um status à
+   parte tipo "cancelamento solicitado": é só uma marca em cima do status
+   que já existia, assim `calcularHorariosLivres()` não precisa saber
+   disso). Só o barbeiro decide o que fazer, via
+   `PATCH /api/agendamentos/[id]`: `{ status: "CANCELADO" }` confirma o
+   cancelamento de vez (usa a transição `CANCELADO` que já existia no
+   `TRANSICOES_PERMITIDAS`, só nunca tinha sido alcançável por ninguém até
+   agora) e dispara `notificarCancelamentoConfirmado` pro próprio
+   barbeiro; `{ recusarCancelamento: true }` mantém o agendamento como
+   estava (limpa `cancelamentoSolicitadoEm`/`motivoCancelamento`, sem
+   mudar o `status`) — 409 se não houver pedido em aberto. Um cliente só
+   pode ter um pedido em aberto por vez (409 se tentar de novo). Não
+   existe pedido de cancelamento pelo lado do barbeiro/dono: o barbeiro
+   sempre pôde cancelar diretamente com `{ status: "CANCELADO" }`, isso
+   não mudou.
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -535,6 +567,29 @@ sessão).
   (P2002) e devolve 409 "Você já tem esse horário cadastrado nesse dia"
   em vez de deixar estourar um 500 cru. Um horário diferente no mesmo dia
   continua sendo permitido normalmente — só a janela idêntica é barrada.
+- **Cliente pode pedir cancelamento de agendamento**: ver regra de negócio
+  9 pro detalhe completo. Resumo: `POST /api/agendamentos/[id]/cancelar`
+  (nova rota) deixa o cliente pedir cancelamento de um `PENDENTE`/
+  `CONFIRMADO` — isso não cancela na hora, só marca o pedido (campos novos
+  `cancelamentoSolicitadoEm`/`motivoCancelamento` no `Agendamento`) e
+  avisa o barbeiro por WhatsApp, pra ele poder conversar com o cliente e
+  entender o motivo antes de decidir. O barbeiro decide via
+  `PATCH /api/agendamentos/[id]`: `{status:"CANCELADO"}` confirma (e
+  agora dispara uma notificação de WhatsApp pro próprio barbeiro
+  confirmando o cancelamento) ou `{recusarCancelamento:true}` mantém o
+  agendamento como estava. `src/lib/whatsapp.ts` ganhou
+  `notificarSolicitacaoCancelamento`/`notificarCancelamentoConfirmado`
+  (reaproveitando a mesma função de envio de `notificarNovoAgendamento`,
+  só que agora fatorada num helper interno comum). Nova página
+  `src/app/meus-agendamentos/page.tsx` — não existia nenhuma tela do
+  cliente pra ver o próprio histórico de agendamentos antes disso; agora
+  tem link em `[slug]/page.tsx` (cabeçalho, pro cliente logado) e na
+  landing (`page.tsx`, só aparece se logado como cliente). Testado de
+  ponta a ponta via script com sessão forjada (`jose` + `JWT_SECRET`
+  real): pedido duplicado dá 409, outro cliente não consegue pedir
+  cancelamento do agendamento alheio (404), recusar sem pedido em aberto
+  dá 409, e o ciclo completo pedir → recusar → pedir de novo → confirmar
+  funciona e limpa os campos corretamente em cada passo.
 
 ## Ambiente / variáveis necessárias
 

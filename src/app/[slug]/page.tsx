@@ -121,6 +121,12 @@ export default function PaginaBarbearia() {
               {sessao.usuario.papel === "CLIENTE"
                 ? `Olá, ${sessao.usuario.nome}`
                 : `Logado como ${sessao.usuario.papel === "DONO" ? "dono" : "barbeiro"} (${sessao.usuario.nome})`}
+              {sessao.usuario.papel === "CLIENTE" && (
+                <>
+                  {" · "}
+                  <a className="underline" href="/meus-agendamentos">Meus agendamentos</a>
+                </>
+              )}
               {" · "}
               <button onClick={sair} className="underline">Sair</button>
             </span>
