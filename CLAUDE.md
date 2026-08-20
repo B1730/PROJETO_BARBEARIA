@@ -683,6 +683,23 @@ sessão).
   `PATCH /api/perfil` não zera campo omitido; `data` inválida em
   `horarios-livres` dá 400. Migração `indices_e_ondelete` aplicada nas
   duas cópias.
+- **Mensagem de erro/sucesso invisível em "Minha disponibilidade"/"Meus
+  cortes"**: usuário relatou que um barbeiro contratado "não conseguia"
+  cadastrar corte, e pediu uma mensagem clara quando tentasse cadastrar
+  uma disponibilidade duplicada. Investigando: as duas coisas já
+  funcionavam no backend (confirmado testando `POST /api/servicos` como
+  um barbeiro contratado de verdade — 200 OK; a trava de disponibilidade
+  duplicada já existia desde a leva anterior, com a mensagem "Você já tem
+  esse horário cadastrado nesse dia") — o problema era só que `erro`/
+  `sucesso` em `barbeiro/page.tsx` só apareciam no topo da página, e as
+  seções "Minha disponibilidade"/"Meus cortes" ficam bem mais abaixo
+  (mais de 100 linhas de JSX de distância); num barbeiro contratado, sem
+  a seção "Minha equipe" (só chefe vê) preenchendo espaço acima, a
+  distância até fica maior ainda. A mensagem existia, só ficava fora da
+  tela sem o usuário perceber que precisava rolar pra cima. Corrigido
+  repetindo `{erro}`/`{sucesso}` logo abaixo de cada um dos dois
+  formulários, além do topo da página (que continua servindo as outras
+  ações da página).
 
 ## Ambiente / variáveis necessárias
 

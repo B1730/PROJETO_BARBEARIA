@@ -520,6 +520,11 @@ export default function PainelBarbeiro() {
             {salvandoDisponibilidade ? "Adicionando..." : "Adicionar"}
           </button>
         </form>
+        {/* Mensagem repetida aqui (além do topo da página) — sem isso, um
+            erro como "Você já tem esse horário cadastrado nesse dia" aparecia
+            só lá em cima, longe dessa seção, e passava despercebido. */}
+        {erro && <p className="text-sm text-red-600 mt-2">{erro}</p>}
+        {sucesso && <p className="text-sm text-green-600 mt-2">{sucesso}</p>}
       </section>
 
       <section>
@@ -559,6 +564,11 @@ export default function PainelBarbeiro() {
             {salvandoServico ? "Cadastrando..." : "Cadastrar corte"}
           </button>
         </form>
+        {/* Mesma repetição da mensagem de cima — evita "não está funcionando"
+            quando na verdade o erro (ex: preço/duração inválidos) apareceu,
+            só que lá no topo da página. */}
+        {erro && <p className="text-sm text-red-600 mt-2">{erro}</p>}
+        {sucesso && <p className="text-sm text-green-600 mt-2">{sucesso}</p>}
       </section>
 
       {ehChefe && (
