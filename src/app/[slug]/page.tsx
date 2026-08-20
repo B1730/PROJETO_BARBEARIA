@@ -8,10 +8,13 @@ type Servico = {
   barbeiros: { barbeiroId: string; preco: string; barbeiro: { id: string; nome: string } }[];
 };
 type Barbearia = { nome: string; servicos: Servico[]; usuarios: { id: string; nome: string; fotoUrl: string | null }[] };
+type Sessao = { usuario: { id: string; nome: string; papel: "CLIENTE" | "BARBEIRO" | "DONO" } };
 
 export default function PaginaBarbearia() {
   const { slug } = useParams<{ slug: string }>();
   const [barbearia, setBarbearia] = useState<Barbearia | null>(null);
+  const [sessao, setSessao] = useState<Sessao | null>(null);
+  const [carregandoSessao, setCarregandoSessao] = useState(true);
   const [servicoEscolhido, setServicoEscolhido] = useState<Servico | null>(null);
   const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   const [data, setData] = useState("");
@@ -34,6 +37,20 @@ export default function PaginaBarbearia() {
         setBarbearia(d.barbearia);
       });
   }, [slug]);
+
+  // Mostra se o cliente já está logado (ou dá pra entrar/cadastrar direto
+  // por aqui) — antes só aparecia depois de tentar agendar e tomar erro.
+  useEffect(() => {
+    fetch("/api/auth/sessao")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setSessao(d))
+      .finally(() => setCarregandoSessao(false));
+  }, []);
+
+  async function sair() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSessao(null);
+  }
 
   useEffect(() => {
     if (!servicoEscolhido || !barbeiroEscolhidoId || !data) return;
@@ -97,6 +114,24 @@ export default function PaginaBarbearia() {
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-14">
+      {!carregandoSessao && (
+        <div className="flex justify-end mb-4 text-sm text-ink/60">
+          {sessao?.usuario ? (
+            <span>
+              {sessao.usuario.papel === "CLIENTE"
+                ? `Olá, ${sessao.usuario.nome}`
+                : `Logado como ${sessao.usuario.papel === "DONO" ? "dono" : "barbeiro"} (${sessao.usuario.nome})`}
+              {" · "}
+              <button onClick={sair} className="underline">Sair</button>
+            </span>
+          ) : (
+            <span>
+              <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a>{" "}ou{" "}
+              <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>Cadastre-se</a>
+            </span>
+          )}
+        </div>
+      )}
       <h1 className="font-display text-3xl mb-8">{barbearia.nome}</h1>
 
       <section className="mb-8">

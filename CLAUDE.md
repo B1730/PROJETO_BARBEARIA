@@ -234,6 +234,12 @@ src/app/
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
+- Ideia futura (ainda sem escopo definido): coletar CPF do cliente,
+  pensando num banco de dados de usuários mais completo mais pra frente.
+  Não implementado — quando for a hora, precisa decidir se fica opcional
+  ou obrigatório, e como pedir isso em quem se cadastra via Google (que
+  não fornece CPF, precisaria de uma telinha extra tipo a que já existe
+  pro dono informar o nome da barbearia).
 - Não existe hoje um jeito automático de marcar um `Agendamento` como
   `CONCLUIDO` depois que o horário passa — hoje isso teria que ser feito
   manualmente ou implementado como próximo passo (ex: um cron job, ou o
@@ -494,6 +500,19 @@ sessão).
   de erro de rede, duplicação de upload, corrida no seletor de período do
   admin, etc.) ficaram como backlog, a maioria já vinha de uma auditoria
   anterior.
+- **Grade de horários sempre de 30 em 30 minutos + login visível na
+  página do cliente**: `calcularHorariosLivres()` (`src/lib/horarios.ts`)
+  oferecia um horário a cada `duracaoMinutos` do próprio serviço — um
+  corte de 90min pulava 9:00 → 10:30 → 12:00, escondendo os horários de
+  30min que cabiam no meio. Agora o passo é sempre fixo em 30min
+  (`PASSO_GRADE_MINUTOS`), e um serviço mais longo simplesmente marca
+  vários desses horários como ocupados (qualquer um que colidiria com um
+  agendamento já existente) — o tempo real continua "descontado"
+  certinho, só a lista de horários oferecidos ficou mais granular.
+  `src/app/[slug]/page.tsx` também ganhou um cabeçalho pequeno mostrando
+  se o cliente já está logado (com botão "Sair") ou, se não, os links
+  "Entrar"/"Cadastre-se" direto — antes só apareciam depois de tentar
+  agendar e tomar erro de permissão.
 
 ## Ambiente / variáveis necessárias
 

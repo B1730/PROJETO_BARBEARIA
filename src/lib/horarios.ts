@@ -53,13 +53,25 @@ export function conflitaComOcupados(inicio: Date, fim: Date, ocupados: Ocupado[]
   return ocupados.some((o) => inicio < o.fim && fim > o.inicio);
 }
 
+// Todo horário oferecido começa em ponto ou meia — igual a disponibilidade
+// que o barbeiro cadastra (ver POST /api/disponibilidade). Antes, o
+// intervalo entre um horário e outro era o tamanho do próprio serviço (um
+// corte de 90min pulava 9:00 → 10:30 → 12:00...), o que escondia horários
+// de 30min que ainda cabiam no meio. Agora sempre pula de 30 em 30 — um
+// serviço mais longo continua marcando vários desses horários como
+// ocupados (qualquer um que, começando ali, invadiria um agendamento já
+// existente), então o tempo de verdade continua "descontado" certinho.
+const PASSO_GRADE_MINUTOS = 30;
+
 /**
  * Calcula os horários livres de um barbeiro em uma data específica.
  *
  * Regra: pega a janela de disponibilidade que o barbeiro cadastrou para
- * aquele dia da semana, quebra em blocos do tamanho do serviço escolhido,
- * e remove os blocos que já têm agendamento PENDENTE ou CONFIRMADO
- * (um agendamento pendente já "segura" o horário até o barbeiro decidir).
+ * aquele dia da semana, oferece um horário a cada 30min dentro dela (desde
+ * que o serviço inteiro caiba antes do fim da janela), e marca como
+ * ocupado qualquer horário que colida com um agendamento já
+ * PENDENTE/CONFIRMADO (um agendamento pendente já "segura" o horário até
+ * o barbeiro decidir).
  */
 export async function calcularHorariosLivres(params: {
   barbeiroId: string;
@@ -131,7 +143,7 @@ export async function calcularHorariosLivres(params: {
         slotsLivres.push(horaFormatada);
       }
 
-      cursor = new Date(cursor.getTime() + duracaoMinutos * 60000);
+      cursor = new Date(cursor.getTime() + PASSO_GRADE_MINUTOS * 60000);
     }
   }
 
