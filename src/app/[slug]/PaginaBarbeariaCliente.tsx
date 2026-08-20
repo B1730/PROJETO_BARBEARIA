@@ -16,15 +16,16 @@ type Sessao = { usuario: { id: string; nome: string; papel: "CLIENTE" | "BARBEIR
 export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia: Barbearia; slug: string }) {
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [carregandoSessao, setCarregandoSessao] = useState(true);
+  const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   // Um agendamento pode ter mais de um corte (ex.: cabelo + barba).
   const [servicosEscolhidos, setServicosEscolhidos] = useState<Servico[]>([]);
-  const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   const [data, setData] = useState("");
   const [horarios, setHorarios] = useState<string[]>([]);
   const [ocupados, setOcupados] = useState<string[]>([]);
   const [semExpediente, setSemExpediente] = useState(false);
   const [diaEncerrado, setDiaEncerrado] = useState(false);
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
+  const [meuWhatsapp, setMeuWhatsapp] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [carregandoHorarios, setCarregandoHorarios] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -37,16 +38,25 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       .finally(() => setCarregandoSessao(false));
   }, []);
 
+  // Se o cliente já tinha WhatsApp cadastrado (no cadastro ou em "Meus
+  // agendamentos"), pré-preenche pra ele não precisar digitar de novo.
+  useEffect(() => {
+    if (sessao?.usuario.papel !== "CLIENTE") return;
+    fetch("/api/perfil")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.usuario?.whatsapp) setMeuWhatsapp(d.usuario.whatsapp); });
+  }, [sessao]);
+
   async function sair() {
     await fetch("/api/auth/logout", { method: "POST" });
     setSessao(null);
   }
 
   // Limpa a mensagem/link de resultado de um pedido anterior sempre que o
-  // cliente escolhe outro corte/barbeiro/data/horário — sem isso, a
+  // cliente escolhe outro profissional/corte/data/horário — sem isso, a
   // mensagem "Pedido enviado!" (e o link de WhatsApp) de um agendamento já
-  // feito reaparecia na hora ao escolher um horário diferente, antes desse
-  // novo pedido ser realmente enviado.
+  // feito reaparecia na hora ao escolher algo diferente, antes desse novo
+  // pedido ser realmente enviado.
   function limparResultadoAnterior() {
     setMensagem("");
     setBarbeiroConfirmado(null);
@@ -56,30 +66,21 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     setServicosEscolhidos((atual) =>
       atual.some((x) => x.id === s.id) ? atual.filter((x) => x.id !== s.id) : [...atual, s]
     );
-    setBarbeiroEscolhidoId(null);
     setHoraEscolhida(null);
     limparResultadoAnterior();
   }
 
-  // Barbeiros que fazem TODOS os cortes escolhidos — precisa estar apto em
-  // cada um deles, não só em algum.
-  const barbeirosElegiveis = barbearia.usuarios.filter((u) =>
-    servicosEscolhidos.every((s) => (s.barbeiros.length === 0 ? true : s.barbeiros.some((b) => b.barbeiroId === u.id)))
-  );
+  // Ordem pedida: primeiro escolhe o profissional, depois só aparecem os
+  // cortes que ELE faz (barbearia toda, ou vínculo exclusivo dele) — ex.:
+  // barbeiro 1 cadastrou cabelo+barba, barbeiro 2 cadastrou sobrancelha e
+  // bigode; selecionar um ou outro já filtra a lista de cortes.
+  const cortesDoBarbeiro = barbeiroEscolhidoId
+    ? barbearia.servicos.filter(
+        (s) => s.barbeiros.length === 0 || s.barbeiros.some((b) => b.barbeiroId === barbeiroEscolhidoId)
+      )
+    : [];
   const precoTotal = servicosEscolhidos.reduce((soma, s) => soma + Number(s.precoBase), 0);
   const duracaoTotal = servicosEscolhidos.reduce((soma, s) => soma + s.duracaoMinutos, 0);
-
-  // Se trocar os cortes escolhidos tirar o barbeiro selecionado da lista de
-  // elegíveis (ex.: ele não faz um dos cortes recém-adicionados), desmarca
-  // ele — sem isso, ficava um barbeiro "escolhido" que não aparece mais
-  // como opção.
-  useEffect(() => {
-    if (barbeiroEscolhidoId && !barbeirosElegiveis.some((b) => b.id === barbeiroEscolhidoId)) {
-      setBarbeiroEscolhidoId(null);
-      setHoraEscolhida(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [servicosEscolhidos]);
 
   useEffect(() => {
     if (servicosEscolhidos.length === 0 || !barbeiroEscolhidoId || !data) return;
@@ -103,7 +104,23 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   async function confirmarAgendamento() {
     setMensagem("");
     setBarbeiroConfirmado(null);
+
+    const whatsappLimpo = meuWhatsapp.replace(/\D/g, "");
+    if (whatsappLimpo.length < 8) {
+      setMensagem("Informe um número de WhatsApp válido — o barbeiro pode precisar entrar em contato.");
+      return;
+    }
+
     setEnviando(true);
+    // Salva o WhatsApp no perfil antes de agendar, pra ficar valendo pra
+    // esse (e os próximos) agendamento — GET /api/agendamentos já devolve
+    // isso pro barbeiro junto com o resto dos dados de contato.
+    await fetch("/api/perfil", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ whatsapp: meuWhatsapp }),
+    });
+
     const resp = await fetch("/api/agendamentos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -166,74 +183,76 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       <h1 className="font-display text-3xl mb-8">{barbearia.nome}</h1>
 
       <section className="mb-8">
-        <h2 className="font-medium mb-3">1. Escolha o(s) corte(s)</h2>
-        <p className="text-xs text-ink/50 mb-2">Pode escolher mais de um — por exemplo, cabelo + barba.</p>
+        <h2 className="font-medium mb-3">1. Escolha o profissional</h2>
         <div className="grid gap-2">
-          {barbearia.servicos.map((s) => {
-            const escolhido = servicosEscolhidos.some((x) => x.id === s.id);
-            return (
-              <button
-                key={s.id}
-                onClick={() => alternarServico(s)}
-                className={`card text-left flex justify-between items-center gap-3 ${escolhido ? "border-accent" : ""}`}
-              >
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`h-4 w-4 rounded border shrink-0 flex items-center justify-center text-[10px] ${escolhido ? "bg-accent border-accent text-white" : "border-line"}`}
-                    aria-hidden
-                  >
-                    {escolhido ? "✓" : ""}
-                  </span>
-                  {s.imagemUrl ? (
-                    <Image src={s.imagemUrl} alt={s.nome} width={48} height={48} className="h-12 w-12 rounded-md object-cover shrink-0" />
-                  ) : (
-                    <div className="h-12 w-12 rounded-md bg-accentSoft shrink-0" aria-hidden />
-                  )}
-                  <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
-                </div>
-                <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
-              </button>
-            );
-          })}
+          {barbearia.usuarios.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => {
+                setBarbeiroEscolhidoId(b.id);
+                setServicosEscolhidos([]);
+                setHoraEscolhida(null);
+                limparResultadoAnterior();
+              }}
+              className={`card text-left flex items-center gap-3 ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
+            >
+              {b.fotoUrl ? (
+                <Image src={b.fotoUrl} alt={b.nome} width={40} height={40} className="h-10 w-10 rounded-full object-cover shrink-0" />
+              ) : (
+                <div className="h-10 w-10 rounded-full bg-accentSoft shrink-0" aria-hidden />
+              )}
+              {b.nome}
+            </button>
+          ))}
         </div>
-        {servicosEscolhidos.length > 0 && (
-          <p className="text-sm text-ink/70 mt-3">
-            Total: <strong>R$ {precoTotal.toFixed(2)}</strong> · {duracaoTotal} min
-          </p>
-        )}
       </section>
 
-      {servicosEscolhidos.length > 0 && (
+      {barbeiroEscolhidoId && (
         <section className="mb-8">
-          <h2 className="font-medium mb-3">2. Escolha o profissional</h2>
-          {barbeirosElegiveis.length === 0 ? (
-            <p className="text-sm text-ink/50">Nenhum profissional faz todos os cortes escolhidos ao mesmo tempo.</p>
+          <h2 className="font-medium mb-3">2. Escolha o(s) corte(s)</h2>
+          <p className="text-xs text-ink/50 mb-2">Pode escolher mais de um — por exemplo, cabelo + barba.</p>
+          {cortesDoBarbeiro.length === 0 ? (
+            <p className="text-sm text-ink/50">Esse profissional não tem cortes cadastrados.</p>
           ) : (
             <div className="grid gap-2">
-              {barbeirosElegiveis.map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => {
-                    setBarbeiroEscolhidoId(b.id);
-                    setHoraEscolhida(null);
-                    limparResultadoAnterior();
-                  }}
-                  className={`card text-left flex items-center gap-3 ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
-                >
-                  {b.fotoUrl ? (
-                    <Image src={b.fotoUrl} alt={b.nome} width={40} height={40} className="h-10 w-10 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="h-10 w-10 rounded-full bg-accentSoft shrink-0" aria-hidden />
-                  )}
-                  {b.nome}
-                </button>
-              ))}
+              {cortesDoBarbeiro.map((s) => {
+                const escolhido = servicosEscolhidos.some((x) => x.id === s.id);
+                const precoDesseBarbeiro = s.barbeiros.find((b) => b.barbeiroId === barbeiroEscolhidoId)?.preco ?? s.precoBase;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => alternarServico(s)}
+                    className={`card text-left flex justify-between items-center gap-3 ${escolhido ? "border-accent" : ""}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`h-4 w-4 rounded border shrink-0 flex items-center justify-center text-[10px] ${escolhido ? "bg-accent border-accent text-white" : "border-line"}`}
+                        aria-hidden
+                      >
+                        {escolhido ? "✓" : ""}
+                      </span>
+                      {s.imagemUrl ? (
+                        <Image src={s.imagemUrl} alt={s.nome} width={48} height={48} className="h-12 w-12 rounded-md object-cover shrink-0" />
+                      ) : (
+                        <div className="h-12 w-12 rounded-md bg-accentSoft shrink-0" aria-hidden />
+                      )}
+                      <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+                    </div>
+                    <span className="font-medium">R$ {Number(precoDesseBarbeiro).toFixed(2)}</span>
+                  </button>
+                );
+              })}
             </div>
+          )}
+          {servicosEscolhidos.length > 0 && (
+            <p className="text-sm text-ink/70 mt-3">
+              Total: <strong>R$ {precoTotal.toFixed(2)}</strong> · {duracaoTotal} min
+            </p>
           )}
         </section>
       )}
 
-      {barbeiroEscolhidoId && (
+      {barbeiroEscolhidoId && servicosEscolhidos.length > 0 && (
         <section className="mb-8">
           <h2 className="font-medium mb-3">3. Escolha o dia e horário</h2>
           <input
@@ -288,6 +307,16 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
             Confirmar <strong>{servicosEscolhidos.map((s) => s.nome).join(" + ")}</strong> (R$ {precoTotal.toFixed(2)})
             em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
           </p>
+          <label className="block text-sm text-ink/70 mb-1">
+            Seu WhatsApp (com DDD e país) — pra o barbeiro entrar em contato se precisar
+          </label>
+          <input
+            className="input mb-3"
+            placeholder="5511999999999"
+            value={meuWhatsapp}
+            onChange={(e) => setMeuWhatsapp(e.target.value)}
+            required
+          />
           <button className="btn-primary" disabled={enviando} onClick={confirmarAgendamento}>
             {enviando ? "Enviando..." : "Solicitar agendamento"}
           </button>

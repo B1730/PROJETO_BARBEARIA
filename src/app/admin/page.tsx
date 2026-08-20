@@ -87,6 +87,9 @@ export default function PainelAdmin() {
   const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
   const [meusPendentes, setMeusPendentes] = useState<MeuAgendamento[]>([]);
   const [meusPedidosCancelamento, setMeusPedidosCancelamento] = useState<MeuAgendamento[]>([]);
+  const [meusAgendados, setMeusAgendados] = useState<MeuAgendamento[]>([]);
+  const [meusConcluidos, setMeusConcluidos] = useState<MeuAgendamento[]>([]);
+  const [meusCancelados, setMeusCancelados] = useState<MeuAgendamento[]>([]);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
   const [meuWhatsapp, setMeuWhatsapp] = useState("");
   const [meuCallmebotApiKey, setMeuCallmebotApiKey] = useState("");
@@ -201,10 +204,12 @@ export default function PainelAdmin() {
   }
 
   async function carregarMinhaAgenda() {
-    const [dispResp, pendResp, confResp] = await Promise.all([
+    const [dispResp, pendResp, confResp, concResp, cancResp] = await Promise.all([
       fetch("/api/disponibilidade"),
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch("/api/agendamentos?status=CONFIRMADO"),
+      fetch("/api/agendamentos?status=CONCLUIDO"),
+      fetch("/api/agendamentos?status=CANCELADO"),
     ]);
     if (dispResp.ok) setMinhaDisponibilidade((await dispResp.json()).disponibilidades || []);
     if (pendResp.ok && confResp.ok) {
@@ -212,9 +217,20 @@ export default function PainelAdmin() {
       const pendentesLista: MeuAgendamento[] = (pend.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
       const confirmadosLista: MeuAgendamento[] = (conf.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
       setMeusPendentes(pendentesLista);
+      setMeusAgendados([...confirmadosLista].sort((a, b) => a.data.localeCompare(b.data)));
       setMeusPedidosCancelamento(
         [...pendentesLista, ...confirmadosLista].filter((ag) => ag.cancelamentoSolicitadoEm)
       );
+    }
+    if (concResp.ok) {
+      const conc = await concResp.json();
+      const lista: MeuAgendamento[] = (conc.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
+      setMeusConcluidos(lista.sort((a, b) => b.data.localeCompare(a.data)).slice(0, 20));
+    }
+    if (cancResp.ok) {
+      const canc = await cancResp.json();
+      const lista: MeuAgendamento[] = (canc.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
+      setMeusCancelados(lista.sort((a, b) => b.data.localeCompare(a.data)).slice(0, 20));
     }
   }
 
@@ -266,6 +282,26 @@ export default function PainelAdmin() {
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível responder esse pedido");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
+
+  // Marca um corte confirmado como concluído — pode ser antes do horário
+  // marcado, ou em outro dia qualquer. O horário original volta a ficar
+  // livre pra outro cliente.
+  async function concluirMeuCorte(id: string) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "CONCLUIDO" }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível concluir esse corte");
       return;
     }
     carregarMinhaAgenda();
@@ -572,6 +608,52 @@ export default function PainelAdmin() {
                       {respondendoId === ag.id ? "..." : "Recusar"}
                     </button>
                   </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <h3 className="text-sm font-medium text-ink/70">Meus cortes agendados</h3>
+              {meusAgendados.length === 0 && <p className="text-sm text-ink/50">Nada confirmado no momento.</p>}
+              {meusAgendados.map((ag) => (
+                <div key={ag.id} className="card flex justify-between items-center">
+                  <div>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                    <p className="text-sm text-ink/60">
+                      {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    </p>
+                    <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
+                  </div>
+                  <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => concluirMeuCorte(ag.id)}>
+                    {respondendoId === ag.id ? "..." : "Marcar concluído"}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <h3 className="text-sm font-medium text-ink/70">Meus cortes concluídos</h3>
+              {meusConcluidos.length === 0 && <p className="text-sm text-ink/50">Nenhum corte concluído ainda.</p>}
+              {meusConcluidos.map((ag) => (
+                <div key={ag.id} className="card">
+                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                  <p className="text-sm text-ink/60">
+                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <h3 className="text-sm font-medium text-ink/70">Meus cortes cancelados</h3>
+              {meusCancelados.length === 0 && <p className="text-sm text-ink/50">Nenhum corte cancelado.</p>}
+              {meusCancelados.map((ag) => (
+                <div key={ag.id} className="card">
+                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                  <p className="text-sm text-ink/60">
+                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                  </p>
+                  <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
                 </div>
               ))}
             </div>

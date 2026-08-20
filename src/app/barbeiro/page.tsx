@@ -26,9 +26,6 @@ const INTERVALO_POLLING_MS = 8000;
 function hojeBrasil() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
-function diaBrasilDe(dataIso: string) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(dataIso));
-}
 function formatarDataCurta(dataIso: string) {
   return new Date(dataIso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
 }
@@ -91,7 +88,9 @@ export default function PainelBarbeiro() {
   const [pendentes, setPendentes] = useState<Agendamento[]>([]);
   const [pedidosCancelamento, setPedidosCancelamento] = useState<Agendamento[]>([]);
   const [agendaHoje, setAgendaHoje] = useState<Agendamento[]>([]);
-  const [proximos, setProximos] = useState<Agendamento[]>([]);
+  const [cortesAgendados, setCortesAgendados] = useState<Agendamento[]>([]);
+  const [cortesConcluidos, setCortesConcluidos] = useState<Agendamento[]>([]);
+  const [cortesCancelados, setCortesCancelados] = useState<Agendamento[]>([]);
   const [disponibilidades, setDisponibilidades] = useState<Disponibilidade[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [financeiro, setFinanceiro] = useState<{ totalGeral: number; totalDeAtendimentos: number } | null>(null);
@@ -161,18 +160,21 @@ export default function PainelBarbeiro() {
   // em lugar nenhum do app).
   async function carregarAgendamentos(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
-    const [pendResp, hojeResp, confResp] = await Promise.all([
+    const [pendResp, hojeResp, confResp, concResp, cancResp] = await Promise.all([
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}`),
       fetch("/api/agendamentos?status=CONFIRMADO"),
+      fetch("/api/agendamentos?status=CONCLUIDO"),
+      fetch("/api/agendamentos?status=CANCELADO"),
     ]);
 
-    const semAcesso = [pendResp, hojeResp, confResp].some((r) => r.status === 401 || r.status === 403);
+    const respostas = [pendResp, hojeResp, confResp, concResp, cancResp];
+    const semAcesso = respostas.some((r) => r.status === 401 || r.status === 403);
     if (semAcesso) {
       router.push("/entrar");
       return;
     }
-    if (!pendResp.ok || !hojeResp.ok || !confResp.ok) {
+    if (respostas.some((r) => !r.ok)) {
       if (mostrarSpinner) {
         setErro("Não foi possível carregar os dados do painel.");
         setCarregando(false);
@@ -180,21 +182,24 @@ export default function PainelBarbeiro() {
       return;
     }
 
-    const [pend, hoje, conf] = await Promise.all([pendResp.json(), hojeResp.json(), confResp.json()]);
+    const [pend, hoje, conf, conc, canc] = await Promise.all(respostas.map((r) => r.json()));
     const pendentesLista: Agendamento[] = pend.agendamentos || [];
     setPendentes(pendentesLista);
     setAgendaHoje(hoje.agendamentos || []);
 
-    // Próximos agendamentos (dias depois de hoje) — pra saber o que vem
-    // por aí sem precisar ficar trocando de dia. "Agendamentos de hoje"
-    // já cobre o dia de hoje, então aqui só entra o que é de outro dia.
+    // "Cortes agendados" — só CONFIRMADO, tudo (hoje e datas futuras),
+    // separado dos pedidos ainda pendentes de aceite.
     const confirmadosLista: Agendamento[] = conf.agendamentos || [];
-    const hojeStr = hojeBrasil();
-    const proximosLista = [...pendentesLista, ...confirmadosLista]
-      .filter((ag) => diaBrasilDe(ag.data) > hojeStr)
-      .sort((a, b) => a.data.localeCompare(b.data))
-      .slice(0, 10);
-    setProximos(proximosLista);
+    setCortesAgendados([...confirmadosLista].sort((a, b) => a.data.localeCompare(b.data)));
+
+    // "Cortes concluídos" e "Cortes cancelados" (com motivo) — histórico,
+    // mais recentes primeiro; limitado a 20 pra não crescer sem fim na tela.
+    setCortesConcluidos(
+      [...(conc.agendamentos || [])].sort((a: Agendamento, b: Agendamento) => b.data.localeCompare(a.data)).slice(0, 20)
+    );
+    setCortesCancelados(
+      [...(canc.agendamentos || [])].sort((a: Agendamento, b: Agendamento) => b.data.localeCompare(a.data)).slice(0, 20)
+    );
 
     // Pedidos de cancelamento do cliente ficam em aberto em qualquer
     // agendamento PENDENTE ou CONFIRMADO (ver POST /api/agendamentos/[id]/cancelar) —
@@ -323,6 +328,28 @@ export default function PainelBarbeiro() {
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível responder esse pedido");
+      return;
+    }
+    carregarAgendamentos(false);
+  }
+
+  // Marca um corte confirmado como concluído — pode ser antes do horário
+  // marcado, ou em outro dia qualquer (decisão do usuário: o cliente pode
+  // ter ido atender em outro momento combinado informalmente). O horário
+  // original volta a ficar livre pra outro cliente (CONCLUIDO não conta
+  // como ocupado em calcularHorariosLivres).
+  async function concluir(id: string) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "CONCLUIDO" }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível concluir esse corte");
       return;
     }
     carregarAgendamentos(false);
@@ -486,18 +513,63 @@ export default function PainelBarbeiro() {
       </section>
 
       <section>
-        <h2 className="font-medium mb-3">Próximos agendamentos</h2>
-        {proximos.length === 0 ? (
-          <p className="text-sm text-ink/50">Nada marcado além de hoje, por enquanto.</p>
+        <h2 className="font-medium mb-3">Cortes agendados</h2>
+        <p className="text-xs text-ink/50 mb-3">Confirmados, aguardando o dia do atendimento.</p>
+        {cortesAgendados.length === 0 ? (
+          <p className="text-sm text-ink/50">Nada confirmado no momento.</p>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-            {proximos.map((ag) => (
-              <div key={ag.id} className="card shrink-0 w-48">
-                <p className="text-xs text-ink/50 mb-1">{formatarDataCurta(ag.data)} · {formatarHora(ag.data)}</p>
-                <p className="font-medium text-sm">{ag.cliente.nome}</p>
-                <p className="text-sm text-ink/60">{nomesCortes(ag)}</p>
-                <p className={`text-xs mt-1 ${COR_STATUS[ag.status] || ""}`}>{ROTULO_STATUS[ag.status] || ag.status}</p>
-                <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
+          <div className="space-y-3">
+            {cortesAgendados.map((ag) => (
+              <div key={ag.id} className="card flex justify-between items-center">
+                <div>
+                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                  <p className="text-sm text-ink/60">
+                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
+                  </p>
+                  <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
+                </div>
+                <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => concluir(ag.id)}>
+                  {respondendoId === ag.id ? "..." : "Marcar concluído"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="font-medium mb-3">Cortes concluídos</h2>
+        {cortesConcluidos.length === 0 ? (
+          <p className="text-sm text-ink/50">Nenhum corte concluído ainda.</p>
+        ) : (
+          <div className="space-y-3">
+            {cortesConcluidos.map((ag) => (
+              <div key={ag.id} className="card">
+                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                <p className="text-sm text-ink/60">
+                  {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                  {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="font-medium mb-3">Cortes cancelados</h2>
+        {cortesCancelados.length === 0 ? (
+          <p className="text-sm text-ink/50">Nenhum corte cancelado.</p>
+        ) : (
+          <div className="space-y-3">
+            {cortesCancelados.map((ag) => (
+              <div key={ag.id} className="card">
+                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                <p className="text-sm text-ink/60">
+                  {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                </p>
+                <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
               </div>
             ))}
           </div>
