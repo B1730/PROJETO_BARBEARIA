@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
+import { exigirSessao, sessaoAtendeComoBarbeiro, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
 
 // "HH:MM" com hora 00-23 e minuto 00-59 — o regex sozinho deixava passar
 // algo como "25:99", que depois estourava silenciosamente no setUTCHours()
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
   let barbeiroId: string;
 
   if (!alvoId) {
-    if (sessao.papel !== "BARBEIRO") {
+    if (!(await sessaoAtendeComoBarbeiro(sessao))) {
       return NextResponse.json({ erro: "Informe o barbeiro (barbeiroId)" }, { status: 400 });
     }
     barbeiroId = sessao.usuarioId;
@@ -71,11 +71,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ disponibilidades });
 }
 
-// POST: barbeiro adiciona uma janela de disponibilidade
-// (ex: segunda-feira, das 09:00 às 18:00)
+// POST: barbeiro (ou dono que também atende, ver regra de negócio 10)
+// adiciona uma janela de disponibilidade (ex: segunda-feira, das 09:00 às 18:00)
 export async function POST(req: NextRequest) {
-  const sessao = await exigirSessao(["BARBEIRO"]);
+  const sessao = await exigirSessao(["BARBEIRO", "DONO"]);
   if (sessao instanceof NextResponse) return sessao;
+  if (!(await sessaoAtendeComoBarbeiro(sessao))) {
+    return NextResponse.json({ erro: "Ative \"também corto cabelo\" no seu perfil antes de cadastrar horários" }, { status: 403 });
+  }
 
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });

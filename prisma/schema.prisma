@@ -74,6 +74,16 @@ model Usuario {
   // barbearia (ver src/lib/exigirSessao.ts, sessaoTemPrivilegioDeChefe).
   ehChefe         Boolean  @default(false)
 
+  // Só faz sentido quando papel = DONO — liga/desliga por conta própria em
+  // PATCH /api/perfil (ver "Meu perfil" em admin/page.tsx). Quando true, o
+  // dono passa a aparecer como um barbeiro de verdade pro cliente (mesmo
+  // tratamento que um BARBEIRO em todo lugar que hoje só olha
+  // `papel === "BARBEIRO"` — ver sessaoAtendeComoBarbeiro() em
+  // src/lib/exigirSessao.ts): pode cadastrar a própria Disponibilidade,
+  // aparece no fluxo de agendamento do cliente, e confirma/recusa os
+  // próprios agendamentos igual qualquer barbeiro.
+  atendeComoBarbeiro Boolean @default(false)
+
   // Foto de perfil (só barbeiro usa isso na interface, mas o campo fica
   // disponível pra qualquer usuário). Guardada no Supabase Storage — este
   // campo é só a URL pública, não o arquivo.

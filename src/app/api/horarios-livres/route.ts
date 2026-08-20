@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   // (uma vez por cada dia que o cliente clica no calendário).
   const [servico, barbeiro] = await Promise.all([
     db.servico.findUnique({ where: { id: servicoId }, select: { ativo: true, duracaoMinutos: true, barbeariaId: true } }),
-    db.usuario.findUnique({ where: { id: barbeiroId }, select: { papel: true, barbeariaId: true } }),
+    db.usuario.findUnique({ where: { id: barbeiroId }, select: { papel: true, barbeariaId: true, atendeComoBarbeiro: true } }),
   ]);
   if (!servico || !servico.ativo) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
@@ -32,8 +32,10 @@ export async function GET(req: NextRequest) {
   // Mesma checagem cross-tenant que POST /api/agendamentos já faz — sem
   // isso, dava pra consultar a agenda de um barbeiro de uma barbearia
   // usando o servicoId de outra barbearia qualquer (vazamento do padrão de
-  // horários ocupados de um concorrente).
-  if (!barbeiro || barbeiro.papel !== "BARBEIRO" || barbeiro.barbeariaId !== servico.barbeariaId) {
+  // horários ocupados de um concorrente). "barbeiro" pode ser um BARBEIRO
+  // de verdade, ou o DONO que ativou "também corto cabelo" (regra 10).
+  const ehBarbeiroValido = barbeiro?.papel === "BARBEIRO" || (barbeiro?.papel === "DONO" && barbeiro.atendeComoBarbeiro);
+  if (!barbeiro || !ehBarbeiroValido || barbeiro.barbeariaId !== servico.barbeariaId) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }
 

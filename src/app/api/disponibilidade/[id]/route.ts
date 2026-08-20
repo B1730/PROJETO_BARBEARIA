@@ -3,7 +3,10 @@ import { db } from "@/lib/db";
 import { exigirSessao } from "@/lib/exigirSessao";
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const sessao = await exigirSessao(["BARBEIRO"]);
+  // BARBEIRO ou DONO que também atende (ver regra de negócio 10) — a
+  // checagem de dono da linha logo abaixo já garante que só quem criou
+  // consegue remover, então não precisa reconferir atendeComoBarbeiro aqui.
+  const sessao = await exigirSessao(["BARBEIRO", "DONO"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const existente = await db.disponibilidade.findUnique({ where: { id: params.id } });

@@ -33,3 +33,18 @@ export async function sessaoTemPrivilegioDeChefe(sessao: SessaoPayload): Promise
   const usuario = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { ehChefe: true } });
   return usuario?.ehChefe ?? false;
 }
+
+/**
+ * true pra todo BARBEIRO (sempre atende) e pro DONO que ativou
+ * `atendeComoBarbeiro` (ver PATCH /api/perfil) — usado em toda rota onde a
+ * pessoa vai agir como um barbeiro de verdade (cadastrar a própria
+ * Disponibilidade, ser listada pro cliente escolher, confirmar/recusar um
+ * agendamento próprio). Sempre confere direto no banco, mesmo padrão de
+ * sessaoTemPrivilegioDeChefe — desligar o atendimento tem efeito imediato.
+ */
+export async function sessaoAtendeComoBarbeiro(sessao: SessaoPayload): Promise<boolean> {
+  if (sessao.papel === "BARBEIRO") return true;
+  if (sessao.papel !== "DONO") return false;
+  const usuario = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { atendeComoBarbeiro: true } });
+  return usuario?.atendeComoBarbeiro ?? false;
+}

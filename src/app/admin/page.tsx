@@ -5,9 +5,17 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Cabecalho from "@/components/Cabecalho";
 
+const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
 type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
 type Servico = { id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
+type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
+type MeuAgendamento = {
+  id: string; status: string; data: string;
+  cliente: { nome: string }; servico: { nome: string }; barbeiro?: { id: string };
+  cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
+};
 
 export default function PainelAdmin() {
   const router = useRouter();
@@ -29,6 +37,21 @@ export default function PainelAdmin() {
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
   const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
+
+  // "Eu também atendo": o dono pode ativar isso pra cortar cabelo também
+  // (ver regra de negócio 10) — quando ativo, ganha a própria agenda
+  // (disponibilidade + pedidos pendentes/cancelamento), igual um barbeiro.
+  const [meuId, setMeuId] = useState<string | null>(null);
+  const [atendoComoBarbeiro, setAtendoComoBarbeiro] = useState(false);
+  const [alternandoAtendimento, setAlternandoAtendimento] = useState(false);
+  const [minhaDisponibilidade, setMinhaDisponibilidade] = useState<Disponibilidade[]>([]);
+  const [novoDia, setNovoDia] = useState(1);
+  const [novaHoraIni, setNovaHoraIni] = useState("09:00");
+  const [novaHoraFim, setNovaHoraFim] = useState("18:00");
+  const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
+  const [meusPendentes, setMeusPendentes] = useState<MeuAgendamento[]>([]);
+  const [meusPedidosCancelamento, setMeusPedidosCancelamento] = useState<MeuAgendamento[]>([]);
+  const [respondendoId, setRespondendoId] = useState<string | null>(null);
 
   async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
     const form = new FormData();
@@ -79,6 +102,122 @@ export default function PainelAdmin() {
 
   useEffect(() => { carregarBarbeirosEServicos(); }, []);
   useEffect(() => { carregarFinanceiro(periodo); }, [periodo]);
+
+  async function carregarPerfil() {
+    const resp = await fetch("/api/perfil");
+    if (!resp.ok) return;
+    const d = await resp.json();
+    setMeuId(d.usuario?.id ?? null);
+    setAtendoComoBarbeiro(!!d.usuario?.atendeComoBarbeiro);
+  }
+
+  useEffect(() => { carregarPerfil(); }, []);
+
+  async function alternarAtendimento() {
+    setErro("");
+    setSucesso("");
+    setAlternandoAtendimento(true);
+    const resp = await fetch("/api/perfil", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ atendeComoBarbeiro: !atendoComoBarbeiro }),
+    });
+    setAlternandoAtendimento(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível atualizar isso");
+      return;
+    }
+    setAtendoComoBarbeiro(!atendoComoBarbeiro);
+  }
+
+  async function carregarMinhaAgenda() {
+    const [dispResp, pendResp, confResp] = await Promise.all([
+      fetch("/api/disponibilidade"),
+      fetch("/api/agendamentos?status=PENDENTE"),
+      fetch("/api/agendamentos?status=CONFIRMADO"),
+    ]);
+    if (dispResp.ok) setMinhaDisponibilidade((await dispResp.json()).disponibilidades || []);
+    if (pendResp.ok && confResp.ok) {
+      const [pend, conf] = await Promise.all([pendResp.json(), confResp.json()]);
+      const pendentesLista: MeuAgendamento[] = (pend.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
+      const confirmadosLista: MeuAgendamento[] = (conf.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
+      setMeusPendentes(pendentesLista);
+      setMeusPedidosCancelamento(
+        [...pendentesLista, ...confirmadosLista].filter((ag) => ag.cancelamentoSolicitadoEm)
+      );
+    }
+  }
+
+  // Só carrega a própria agenda depois que o perfil confirmou o
+  // atendimento ativo E já se sabe quem é o próprio id (senão o filtro
+  // por barbeiro.id === meuId ficaria comparando com null).
+  useEffect(() => {
+    if (atendoComoBarbeiro && meuId) carregarMinhaAgenda();
+  }, [atendoComoBarbeiro, meuId]);
+
+  async function adicionarMinhaDisponibilidade(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setSalvandoDisponibilidade(true);
+    const resp = await fetch("/api/disponibilidade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diaDaSemana: novoDia, horaInicio: novaHoraIni, horaFim: novaHoraFim }),
+    });
+    setSalvandoDisponibilidade(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível adicionar essa disponibilidade");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
+
+  async function removerMinhaDisponibilidade(id: string) {
+    setErro("");
+    const resp = await fetch(`/api/disponibilidade/${id}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível remover essa disponibilidade");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
+
+  async function responderMeuPedido(id: string, status: "CONFIRMADO" | "RECUSADO") {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível responder esse pedido");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
+
+  async function decidirMeuCancelamento(id: string, confirmar: boolean) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(confirmar ? { status: "CANCELADO" } : { recusarCancelamento: true }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível processar esse pedido de cancelamento");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
 
   async function adicionarBarbeiro(e: React.FormEvent) {
     e.preventDefault();
@@ -264,6 +403,91 @@ export default function PainelAdmin() {
             {salvandoServico ? "Adicionando..." : "Adicionar corte"}
           </button>
         </form>
+      </section>
+
+      <section>
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="font-medium">Eu também atendo</h2>
+          <button className="text-sm text-ink/60 hover:text-ink" disabled={alternandoAtendimento} onClick={alternarAtendimento}>
+            {alternandoAtendimento ? "..." : atendoComoBarbeiro ? "Desativar atendimento" : "Ativar atendimento"}
+          </button>
+        </div>
+        <p className="text-sm text-ink/50 mb-3">
+          Se você também corta cabelo, ative isso pra aparecer como opção pro cliente escolher, com sua própria
+          disponibilidade e seus próprios pedidos de agendamento.
+        </p>
+
+        {atendoComoBarbeiro && (
+          <>
+            {meusPedidosCancelamento.length > 0 && (
+              <div className="space-y-3 mb-4">
+                <h3 className="text-sm font-medium text-ink/70">Pedidos de cancelamento</h3>
+                {meusPedidosCancelamento.map((ag) => (
+                  <div key={ag.id} className="card border-amber-300">
+                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="text-sm text-ink/60">
+                      {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    </p>
+                    <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+                    <div className="flex gap-2 mt-3">
+                      <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirMeuCancelamento(ag.id, true)}>
+                        {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
+                      </button>
+                      <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => decidirMeuCancelamento(ag.id, false)}>
+                        {respondendoId === ag.id ? "..." : "Manter agendamento"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-3 mb-4">
+              <h3 className="text-sm font-medium text-ink/70">Meus pedidos pendentes</h3>
+              {meusPendentes.length === 0 && <p className="text-sm text-ink/50">Nenhum pedido pendente.</p>}
+              {meusPendentes.map((ag) => (
+                <div key={ag.id} className="card flex justify-between items-center">
+                  <div>
+                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="text-sm text-ink/60">
+                      {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "CONFIRMADO")}>
+                      {respondendoId === ag.id ? "..." : "Aceitar"}
+                    </button>
+                    <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "RECUSADO")}>
+                      {respondendoId === ag.id ? "..." : "Recusar"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <h3 className="text-sm font-medium text-ink/70 mb-2">Minha disponibilidade</h3>
+            <div className="space-y-2 mb-4">
+              {minhaDisponibilidade.map((d) => (
+                <div key={d.id} className="card flex justify-between items-center">
+                  <span>{DIAS[d.diaDaSemana]}: {d.horaInicio} às {d.horaFim}</span>
+                  <button className="text-sm text-red-600" onClick={() => removerMinhaDisponibilidade(d.id)}>Remover</button>
+                </div>
+              ))}
+            </div>
+            <form onSubmit={adicionarMinhaDisponibilidade} className="card flex flex-wrap gap-2 items-end">
+              <select className="input" value={novoDia} onChange={(e) => setNovoDia(Number(e.target.value))}>
+                {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              </select>
+              <input type="time" step={1800} className="input" value={novaHoraIni} onChange={(e) => setNovaHoraIni(e.target.value)} />
+              <input type="time" step={1800} className="input" value={novaHoraFim} onChange={(e) => setNovaHoraFim(e.target.value)} />
+              <button className="btn-primary" disabled={salvandoDisponibilidade}>
+                {salvandoDisponibilidade ? "Adicionando..." : "Adicionar"}
+              </button>
+            </form>
+            {erro && <p className="text-sm text-red-600 mt-2">{erro}</p>}
+            {sucesso && <p className="text-sm text-green-600 mt-2">{sucesso}</p>}
+          </>
+        )}
       </section>
       </main>
     </>

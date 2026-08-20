@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     db.servico.findUnique({ where: { id: servicoId }, include: { barbeiros: true } }),
     db.usuario.findUnique({
       where: { id: barbeiroId },
-      select: { id: true, nome: true, papel: true, barbeariaId: true, whatsapp: true, callmebotApiKey: true },
+      select: { id: true, nome: true, papel: true, barbeariaId: true, whatsapp: true, callmebotApiKey: true, atendeComoBarbeiro: true },
     }),
     db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } }),
   ]);
@@ -47,7 +47,10 @@ export async function POST(req: NextRequest) {
   if (!servico || !servico.ativo) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
-  if (!barbeiro || barbeiro.papel !== "BARBEIRO" || barbeiro.barbeariaId !== servico.barbeariaId) {
+  // "barbeiro" pode ser um BARBEIRO de verdade, ou o DONO que ativou
+  // "também corto cabelo" (ver regra de negócio 10).
+  const ehBarbeiroValido = barbeiro?.papel === "BARBEIRO" || (barbeiro?.papel === "DONO" && barbeiro.atendeComoBarbeiro);
+  if (!barbeiro || !ehBarbeiroValido || barbeiro.barbeariaId !== servico.barbeariaId) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }
 

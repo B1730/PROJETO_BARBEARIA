@@ -126,7 +126,8 @@ src/app/
     agendamentos/[id]/cancelar → POST, cliente pede cancelamento (ver regra de negócio 9)
     financeiro                 → relatório por período, filtrado por papel (dono vê tudo da
                                   barbearia agrupado por barbeiro; barbeiro vê só o próprio)
-    perfil                     → GET/PATCH, barbeiro edita o próprio whatsapp/callmebotApiKey
+    perfil                     → GET/PATCH, barbeiro edita o próprio whatsapp/callmebotApiKey;
+                                  dono usa pra ligar/desligar atendeComoBarbeiro (regra 10)
 ```
 
 ## Modelo de dados (resumo — ver prisma/schema.prisma para o completo)
@@ -154,7 +155,9 @@ src/app/
   um pedido de cancelamento do cliente em aberto — ver regra de negócio 9.
 - `Usuario.senhaHash` é nullable: contas criadas via "Entrar com Google"
   não têm senha. `Usuario.fotoUrl` guarda a foto de perfil (usada pelo
-  barbeiro), também no Supabase Storage.
+  barbeiro), também no Supabase Storage. `Usuario.atendeComoBarbeiro`
+  (default `false`) só faz sentido pra `papel: "DONO"` — liga/desliga se o
+  dono também corta cabelo, ver regra de negócio 10.
 
 ## Regras de negócio que não podem ser quebradas
 
@@ -265,6 +268,44 @@ src/app/
    existe pedido de cancelamento pelo lado do barbeiro/dono: o barbeiro
    sempre pôde cancelar diretamente com `{ status: "CANCELADO" }`, isso
    não mudou.
+10. **Dono também pode atender como barbeiro, se quiser** —
+    `Usuario.atendeComoBarbeiro` (só faz sentido em `papel: "DONO"`,
+    `default(false)`) é um interruptor que o próprio dono liga/desliga via
+    `PATCH /api/perfil` (rota que antes só aceitava `BARBEIRO`, agora
+    aceita `DONO` também — o campo é ignorado se quem manda não for
+    `DONO`). Quando ligado, o dono passa a ser tratado como um barbeiro de
+    verdade em todo lugar que antes só olhava `papel === "BARBEIRO"`: fica
+    listado em `GET /api/barbearias/[slug]` (`src/lib/barbearia.ts`,
+    `buscarBarbeariaPublica()`) pro cliente escolher; consegue cadastrar a
+    própria `Disponibilidade` (`POST /api/disponibilidade`, `DELETE
+    /api/disponibilidade/[id]`); `POST /api/agendamentos` e
+    `GET /api/horarios-livres` passam a aceitar o id dele como
+    `barbeiroId` válido; e ele confirma/recusa/cancela os próprios
+    agendamentos como qualquer barbeiro (`PATCH /api/agendamentos/[id]`,
+    que agora aceita `DONO` também — a checagem de dono do agendamento
+    logo abaixo, `agendamento.barbeiroId !== sessao.usuarioId`, continua
+    sendo o que garante que ele só mexe nos próprios, nunca nos de outro
+    barbeiro). O helper `sessaoAtendeComoBarbeiro()` em
+    `src/lib/exigirSessao.ts` (mesmo padrão de
+    `sessaoTemPrivilegioDeChefe`: sempre confere direto no banco, nunca
+    confia no cookie) centraliza essa checagem "true pra todo BARBEIRO, ou
+    pro DONO com o interruptor ligado". A UI fica dentro de `/admin`, numa
+    seção "Eu também atendo" — não reaproveita `/barbeiro` porque as
+    queries de `GET /api/agendamentos` daquela tela assumem
+    `sessao.papel === "BARBEIRO"` pra filtrar só os próprios agendamentos
+    (pro `DONO` ali o filtro vira "a barbearia toda", que é o
+    comportamento certo pro resto do painel dele); em vez disso,
+    `admin/page.tsx` busca `?status=PENDENTE`/`?status=CONFIRMADO`
+    normalmente (que já vêm com a barbearia toda pro dono) e filtra no
+    client por `ag.barbeiro?.id === meuId`. Cortes (`Servico`) continuam
+    sem mudança: um corte criado pelo dono continua de alcance pra
+    barbearia toda (regra 5) — o dono-que-atende não ganhou a opção de
+    criar corte exclusivo pra si como um `BARBEIRO` contratado consegue;
+    se isso for pedido depois, é extensão natural. Testado de ponta a
+    ponta: sem ativar, `POST /api/disponibilidade` dá 403; ativando,
+    aparece em `barbearia.usuarios`, consegue cadastrar disponibilidade, o
+    cliente consegue agendar com ele, e ele consegue confirmar o próprio
+    agendamento; desativando, some de `barbearia.usuarios` de novo.
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -700,6 +741,15 @@ sessão).
   repetindo `{erro}`/`{sucesso}` logo abaixo de cada um dos dois
   formulários, além do topo da página (que continua servindo as outras
   ações da página).
+- **Dono também pode atender como barbeiro**: ver regra de negócio 10 pro
+  detalhe completo. Resumo: novo interruptor "Eu também atendo" em
+  `/admin` (usa `PATCH /api/perfil`, agora aberto pro `DONO` também) —
+  quando ligado, o dono ganha a própria seção de "Minha disponibilidade" +
+  "Meus pedidos pendentes"/"Pedidos de cancelamento" dentro do próprio
+  painel, e passa a aparecer pro cliente escolher como qualquer barbeiro
+  na página pública da barbearia. Testado de ponta a ponta (ativar/
+  desativar, cadastrar disponibilidade, cliente agendar com o dono,
+  confirmar o próprio agendamento).
 
 ## Ambiente / variáveis necessárias
 

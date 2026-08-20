@@ -20,13 +20,18 @@ const TRANSICOES_PERMITIDAS: Record<string, string[]> = {
   CANCELADO: ["PENDENTE", "CONFIRMADO"],
 };
 
-// PATCH: só o barbeiro dono do agendamento pode confirmar/recusar/cancelar.
-// É essa a regra pedida: "quem confirma é apenas o barbeiro". Isso vale
-// também pra decisão final sobre um pedido de cancelamento do cliente (ver
-// POST /api/agendamentos/[id]/cancelar): o barbeiro é quem confirma
-// (status vira CANCELADO) ou recusa (mantém o agendamento como estava).
+// PATCH: só o barbeiro dono do agendamento pode confirmar/recusar/cancelar
+// (ou o dono da barbearia, quando o agendamento é dele mesmo — ver regra
+// de negócio 10, "atendeComoBarbeiro"; a checagem de dono do agendamento
+// logo abaixo já garante isso, então não precisa reconferir o interruptor
+// aqui). É essa a regra pedida: "quem confirma é apenas o barbeiro". Isso
+// vale também pra decisão final sobre um pedido de cancelamento do
+// cliente (ver POST /api/agendamentos/[id]/cancelar): quem confirma
+// (status vira CANCELADO) ou recusa (mantém o agendamento como estava) é
+// sempre quem está de fato marcado como o barbeiro daquele agendamento —
+// nunca o dono agindo por outro barbeiro.
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const sessao = await exigirSessao(["BARBEIRO"]);
+  const sessao = await exigirSessao(["BARBEIRO", "DONO"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const agendamento = await db.agendamento.findUnique({

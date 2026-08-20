@@ -28,8 +28,10 @@ export async function buscarBarbeariaPublica(slug: string) {
           },
         },
       },
+      // BARBEIRO sempre entra; DONO só se tiver ativado "também corto
+      // cabelo" (ver Usuario.atendeComoBarbeiro e regra de negócio 10).
       usuarios: {
-        where: { papel: "BARBEIRO" },
+        where: { OR: [{ papel: "BARBEIRO" }, { papel: "DONO", atendeComoBarbeiro: true }] },
         select: { id: true, nome: true, fotoUrl: true },
       },
     },
