@@ -52,6 +52,9 @@ export default function PainelAdmin() {
   const [meusPendentes, setMeusPendentes] = useState<MeuAgendamento[]>([]);
   const [meusPedidosCancelamento, setMeusPedidosCancelamento] = useState<MeuAgendamento[]>([]);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
+  const [meuWhatsapp, setMeuWhatsapp] = useState("");
+  const [meuCallmebotApiKey, setMeuCallmebotApiKey] = useState("");
+  const [salvandoContato, setSalvandoContato] = useState(false);
 
   async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
     const form = new FormData();
@@ -109,6 +112,8 @@ export default function PainelAdmin() {
     const d = await resp.json();
     setMeuId(d.usuario?.id ?? null);
     setAtendoComoBarbeiro(!!d.usuario?.atendeComoBarbeiro);
+    setMeuWhatsapp(d.usuario?.whatsapp || "");
+    setMeuCallmebotApiKey(d.usuario?.callmebotApiKey || "");
   }
 
   useEffect(() => { carregarPerfil(); }, []);
@@ -129,6 +134,25 @@ export default function PainelAdmin() {
       return;
     }
     setAtendoComoBarbeiro(!atendoComoBarbeiro);
+  }
+
+  async function salvarContatoWhatsapp(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+    setSalvandoContato(true);
+    const resp = await fetch("/api/perfil", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ whatsapp: meuWhatsapp, callmebotApiKey: meuCallmebotApiKey }),
+    });
+    setSalvandoContato(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível salvar");
+      return;
+    }
+    setSucesso("WhatsApp salvo — você vai receber os avisos de agendamento por lá.");
   }
 
   async function carregarMinhaAgenda() {
@@ -419,6 +443,32 @@ export default function PainelAdmin() {
 
         {atendoComoBarbeiro && (
           <>
+            <div className="card mb-4 border-accent">
+              <h3 className="font-medium mb-2">Receber avisos no WhatsApp</h3>
+              <p className="text-xs text-ink/50 mb-3">
+                1. Salve o número <strong>+34 644 59 71 92</strong> nos seus contatos do WhatsApp.
+                <br />2. Mande pra ele a mensagem: <strong>I allow callmebot to send me messages</strong>
+                <br />3. Ele responde com sua chave (apikey) pessoal — cole ela abaixo, junto com o seu número.
+              </p>
+              <form onSubmit={salvarContatoWhatsapp} className="grid gap-2">
+                <input
+                  className="input"
+                  placeholder="Seu WhatsApp (com DDD e país, só números)"
+                  value={meuWhatsapp}
+                  onChange={(e) => setMeuWhatsapp(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="Apikey do CallMeBot"
+                  value={meuCallmebotApiKey}
+                  onChange={(e) => setMeuCallmebotApiKey(e.target.value)}
+                />
+                <button className="btn-primary" disabled={salvandoContato}>
+                  {salvandoContato ? "Salvando..." : "Salvar WhatsApp"}
+                </button>
+              </form>
+            </div>
+
             {meusPedidosCancelamento.length > 0 && (
               <div className="space-y-3 mb-4">
                 <h3 className="text-sm font-medium text-ink/70">Pedidos de cancelamento</h3>

@@ -23,7 +23,7 @@ export default async function Home() {
       <nav className="relative max-w-5xl mx-auto px-6 py-6 flex justify-between items-center">
         <span className="font-display text-lg">Barbearia Online</span>
         {sessao?.papel === "CLIENTE" ? (
-          <Link href="/meus-agendamentos" className="text-sm text-ink/70 hover:text-ink transition-colors">
+          <Link href="/meus-agendamentos" className="btn-secondary text-sm">
             Meus agendamentos
           </Link>
         ) : (

@@ -115,26 +115,27 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   return (
     <main className="max-w-2xl mx-auto px-6 py-14">
       {!carregandoSessao && (
-        <div className="flex justify-end mb-4 text-sm text-ink/60">
-          {sessao?.usuario ? (
-            <span>
-              {sessao.usuario.papel === "CLIENTE"
-                ? `Olá, ${sessao.usuario.nome}`
-                : `Logado como ${sessao.usuario.papel === "DONO" ? "dono" : "barbeiro"} (${sessao.usuario.nome})`}
-              {sessao.usuario.papel === "CLIENTE" && (
-                <>
-                  {" · "}
-                  <a className="underline" href="/meus-agendamentos">Meus agendamentos</a>
-                </>
-              )}
-              {" · "}
-              <button onClick={sair} className="underline">Sair</button>
-            </span>
-          ) : (
-            <span>
-              <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a>{" "}ou{" "}
-              <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>Cadastre-se</a>
-            </span>
+        <div className="flex justify-between items-center gap-3 mb-4">
+          <span className="text-sm text-ink/60">
+            {sessao?.usuario ? (
+              <>
+                {sessao.usuario.papel === "CLIENTE"
+                  ? `Olá, ${sessao.usuario.nome}`
+                  : `Logado como ${sessao.usuario.papel === "DONO" ? "dono" : "barbeiro"} (${sessao.usuario.nome})`}
+                {" · "}
+                <button onClick={sair} className="underline">Sair</button>
+              </>
+            ) : (
+              <>
+                <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a>{" "}ou{" "}
+                <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>Cadastre-se</a>
+              </>
+            )}
+          </span>
+          {sessao?.usuario?.papel === "CLIENTE" && (
+            <a href="/meus-agendamentos" className="btn-secondary text-sm shrink-0">
+              Meus agendamentos
+            </a>
           )}
         </div>
       )}

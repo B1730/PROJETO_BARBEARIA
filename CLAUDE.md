@@ -750,6 +750,20 @@ sessão).
   na página pública da barbearia. Testado de ponta a ponta (ativar/
   desativar, cadastrar disponibilidade, cliente agendar com o dono,
   confirmar o próprio agendamento).
+- **Botões mais visíveis: "Meus agendamentos" e WhatsApp do dono**:
+  pedido do usuário pra dar mais destaque a dois pontos sem mudar o
+  comportamento. "Meus agendamentos" (cliente logado) virou um botão de
+  verdade (`btn-secondary`) em vez de link sublinhado discreto — tanto na
+  landing (`page.tsx`) quanto no cabeçalho da página da barbearia
+  (`PaginaBarbeariaCliente.tsx`, que também ganhou um `flex justify-
+  between` pra separar esse botão do texto de "Olá, .../Sair"). E como o
+  dono agora também pode atender (item acima), a seção "Eu também atendo"
+  em `/admin` ganhou um cartão "Receber avisos no WhatsApp" — reaproveita
+  o mesmo passo a passo do CallMeBot que já existia em `/barbeiro/perfil`,
+  chamando o mesmo `PATCH /api/perfil` (que já aceitava `whatsapp`/
+  `callmebotApiKey` de um `DONO` desde a leva anterior — só faltava a
+  tela). Fica só dentro do bloco "atendoComoBarbeiro" ativo, já que só
+  faz sentido depois que o dono decide atender.
 
 ## Ambiente / variáveis necessárias
 
