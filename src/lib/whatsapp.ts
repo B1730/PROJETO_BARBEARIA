@@ -39,3 +39,11 @@ export async function notificarSolicitacaoCancelamento(params: { whatsapp: strin
 export async function notificarCancelamentoConfirmado(params: { whatsapp: string; apikey: string; mensagem: string }) {
   await enviarWhatsapp(params.whatsapp, params.apikey, params.mensagem);
 }
+
+// Cliente cancelou um agendamento que ainda estava PENDENTE — diferente de
+// notificarSolicitacaoCancelamento, esse cancelamento é direto (o barbeiro
+// nunca tinha aceitado ainda, então não tem o que decidir) — ver
+// POST /api/agendamentos/[id]/cancelar.
+export async function notificarCancelamentoDireto(params: { whatsapp: string; apikey: string; mensagem: string }) {
+  await enviarWhatsapp(params.whatsapp, params.apikey, params.mensagem);
+}

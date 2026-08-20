@@ -85,6 +85,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       // rejeita com 409 sempre que já existe um pedido em aberto).
       cancelamentoSolicitadoEm: null,
       motivoCancelamento: null,
+      // Marca só na primeira vez que vira CONFIRMADO — usado pelo relatório
+      // de desempenho do chefe (tempo de demora pra aceitar, ver
+      // GET /api/relatorio-equipe). TRANSICOES_PERMITIDAS já garante que só
+      // se chega em CONFIRMADO vindo de PENDENTE, então isso nunca sobrescreve.
+      ...(dados.data.status === "CONFIRMADO" ? { confirmadoEm: new Date() } : {}),
     },
   });
 

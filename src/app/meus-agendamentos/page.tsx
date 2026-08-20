@@ -131,7 +131,9 @@ export default function MeusAgendamentos() {
               {podeCancelar && pedindoCancelamentoId === ag.id && (
                 <div className="mt-3 space-y-2">
                   <label className="block text-sm text-ink/70">
-                    Motivo (opcional) — ajuda o barbeiro a entender antes de cancelar
+                    {ag.status === "PENDENTE"
+                      ? "Motivo (opcional) — o barbeiro ainda não confirmou, então isso cancela na hora"
+                      : "Motivo (opcional) — ajuda o barbeiro a entender antes de decidir"}
                   </label>
                   <textarea
                     className="input w-full"
@@ -142,7 +144,7 @@ export default function MeusAgendamentos() {
                   />
                   <div className="flex gap-2">
                     <button className="btn-primary" disabled={enviando} onClick={() => confirmarPedidoCancelamento(ag.id)}>
-                      {enviando ? "Enviando..." : "Confirmar pedido de cancelamento"}
+                      {enviando ? "Enviando..." : ag.status === "PENDENTE" ? "Cancelar agendamento" : "Confirmar pedido de cancelamento"}
                     </button>
                     <button className="btn-secondary" disabled={enviando} onClick={() => setPedindoCancelamentoId(null)}>
                       Voltar

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
 
 const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -573,7 +574,12 @@ export default function PainelBarbeiro() {
 
       {ehChefe && (
         <section>
-          <h2 className="font-medium mb-3">Minha equipe</h2>
+          <div className="flex justify-between items-center mb-3">
+            <h2 className="font-medium">Minha equipe</h2>
+            <Link href="/barbeiro/desempenho" className="btn-secondary text-sm">
+              Desempenho da equipe
+            </Link>
+          </div>
 
           <div className="card mb-4">
             <div className="flex justify-between items-center mb-3">

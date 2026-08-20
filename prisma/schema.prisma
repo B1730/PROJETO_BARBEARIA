@@ -196,6 +196,17 @@ model Agendamento {
   cancelamentoSolicitadoEm DateTime?
   motivoCancelamento       String?
 
+  // Marcado uma única vez, no exato momento em que o status vira
+  // CONFIRMADO (PATCH /api/agendamentos/[id]) — nunca mais muda depois
+  // disso, mesmo que o agendamento avance pra CONCLUIDO/CANCELADO depois.
+  // Existe só pro relatório de desempenho do chefe (tempo de demora pra
+  // aceitar, ver GET /api/relatorio-equipe): `atualizadoEm` sozinho não
+  // serviria pra isso porque ele reflete a ÚLTIMA mudança do agendamento,
+  // não especificamente a confirmação — um agendamento que já virou
+  // CONCLUIDO, por exemplo, teria atualizadoEm apontando pra quando isso
+  // aconteceu, não pra quando foi aceito.
+  confirmadoEm  DateTime?
+
   criadoEm      DateTime          @default(now())
   atualizadoEm  DateTime          @updatedAt
 

@@ -111,9 +111,10 @@ src/app/
                         cancelamento, disponibilidade, cortes próprios) — atualiza sozinho
                         a cada 8s (polling)
   barbeiro/perfil/page.tsx → barbeiro cadastra o próprio WhatsApp/apikey do CallMeBot
+  barbeiro/desempenho/page.tsx → relatório de desempenho da equipe, só chefe/dono (regra 11)
   admin/page.tsx     → painel do dono (barbeiros, cortes/preços, faturamento)
   meus-agendamentos/page.tsx → cliente vê o próprio histórico de agendamentos (todas as
-                        barbearias) e pede cancelamento de um PENDENTE/CONFIRMADO
+                        barbearias) e cancela um PENDENTE/pede cancelamento de um CONFIRMADO
 
   api/
     auth/cadastro, auth/login, auth/logout, auth/sessao (GET, devolve usuário + barbearia logados)
@@ -123,9 +124,12 @@ src/app/
     disponibilidade, disponibilidade/[id]  → barbeiro gerencia a própria agenda
     horarios-livres           → GET público, usa calcularHorariosLivres()
     agendamentos, agendamentos/[id]  → cliente pede; barbeiro confirma/recusa/cancela (PATCH)
-    agendamentos/[id]/cancelar → POST, cliente pede cancelamento (ver regra de negócio 9)
+    agendamentos/[id]/cancelar → POST, cliente cancela PENDENTE direto ou pede cancelamento de
+                                  um CONFIRMADO (ver regra de negócio 9)
     financeiro                 → relatório por período, filtrado por papel (dono vê tudo da
                                   barbearia agrupado por barbeiro; barbeiro vê só o próprio)
+    relatorio-equipe           → GET, só chefe/dono — desempenho por barbeiro num intervalo de
+                                  datas livre (regra de negócio 11)
     perfil                     → GET/PATCH, barbeiro edita o próprio whatsapp/callmebotApiKey;
                                   dono usa pra ligar/desligar atendeComoBarbeiro (regra 10)
 ```
@@ -153,6 +157,8 @@ src/app/
   de horário livre cai de volta pra duração atual do serviço quando é nulo.
   `cancelamentoSolicitadoEm`/`motivoCancelamento` (ambos nullable) guardam
   um pedido de cancelamento do cliente em aberto — ver regra de negócio 9.
+  `confirmadoEm` (nullable) marca só uma vez, quando o status vira
+  `CONFIRMADO` — usado pelo relatório de desempenho do chefe (regra 11).
 - `Usuario.senhaHash` é nullable: contas criadas via "Entrar com Google"
   não têm senha. `Usuario.fotoUrl` guarda a foto de perfil (usada pelo
   barbeiro), também no Supabase Storage. `Usuario.atendeComoBarbeiro`
@@ -244,30 +250,34 @@ src/app/
    convidar qualquer barbeiro de verdade. Trocado pra Gmail/SMTP (conta
    pessoal do usuário + senha de app) por não exigir domínio próprio nem
    cadastro em serviço novo.
-9. **Cancelamento de agendamento pelo cliente é um pedido, não um
-   cancelamento direto** — `POST /api/agendamentos/[id]/cancelar` (só o
-   CLIENTE dono do agendamento, `PENDENTE` ou `CONFIRMADO`) não muda o
-   `status` na hora: só marca `Agendamento.cancelamentoSolicitadoEm`
-   (+ `motivoCancelamento` opcional) e avisa o barbeiro por WhatsApp
-   (`notificarSolicitacaoCancelamento`, mesmo padrão do
-   `notificarNovoAgendamento`). O agendamento continua `PENDENTE`/
-   `CONFIRMADO` e ocupando o horário normalmente enquanto o pedido está
-   em aberto — de propósito, pra dar tempo do barbeiro falar com o
-   cliente e entender o motivo antes de decidir (não existe um status à
-   parte tipo "cancelamento solicitado": é só uma marca em cima do status
-   que já existia, assim `calcularHorariosLivres()` não precisa saber
-   disso). Só o barbeiro decide o que fazer, via
+9. **Cancelamento de agendamento pelo cliente: direto se `PENDENTE`, é um
+   pedido se `CONFIRMADO`** — `POST /api/agendamentos/[id]/cancelar` (só o
+   CLIENTE dono do agendamento) se comporta diferente dependendo do status
+   atual: se o barbeiro **ainda não confirmou** (`PENDENTE`), não tem o
+   que decidir — o `status` já vira `CANCELADO` na hora (dispara
+   `notificarCancelamentoDireto`, só avisando o barbeiro). Se o
+   agendamento já estava **`CONFIRMADO`**, o barbeiro já se comprometeu com
+   aquele horário, então isso NÃO cancela na hora: só marca
+   `Agendamento.cancelamentoSolicitadoEm` (+ `motivoCancelamento`
+   opcional) e avisa o barbeiro por WhatsApp
+   (`notificarSolicitacaoCancelamento`), continuando `CONFIRMADO` e
+   ocupando o horário normalmente enquanto o pedido está em aberto — de
+   propósito, pra dar tempo do barbeiro falar com o cliente e entender o
+   motivo antes de decidir (não existe um status à parte tipo
+   "cancelamento solicitado": é só uma marca em cima do status que já
+   existia, assim `calcularHorariosLivres()` não precisa saber disso). Só
+   o barbeiro decide o que fazer com um pedido em aberto, via
    `PATCH /api/agendamentos/[id]`: `{ status: "CANCELADO" }` confirma o
-   cancelamento de vez (usa a transição `CANCELADO` que já existia no
-   `TRANSICOES_PERMITIDAS`, só nunca tinha sido alcançável por ninguém até
-   agora) e dispara `notificarCancelamentoConfirmado` pro próprio
-   barbeiro; `{ recusarCancelamento: true }` mantém o agendamento como
-   estava (limpa `cancelamentoSolicitadoEm`/`motivoCancelamento`, sem
+   cancelamento de vez e dispara `notificarCancelamentoConfirmado` pro
+   próprio barbeiro; `{ recusarCancelamento: true }` mantém o agendamento
+   como estava (limpa `cancelamentoSolicitadoEm`/`motivoCancelamento`, sem
    mudar o `status`) — 409 se não houver pedido em aberto. Um cliente só
-   pode ter um pedido em aberto por vez (409 se tentar de novo). Não
-   existe pedido de cancelamento pelo lado do barbeiro/dono: o barbeiro
-   sempre pôde cancelar diretamente com `{ status: "CANCELADO" }`, isso
-   não mudou.
+   pode ter um pedido em aberto por vez (409 se tentar de novo), e o
+   cancelamento direto de um `PENDENTE` também é 409 se o status já mudou
+   (corrida fechada com `updateMany`, mesmo padrão do ramo `CONFIRMADO`).
+   Não existe pedido de cancelamento pelo lado do barbeiro/dono: o
+   barbeiro sempre pôde cancelar diretamente com `{ status: "CANCELADO" }`
+   em qualquer um dos dois status, isso não mudou.
 10. **Dono também pode atender como barbeiro, se quiser** —
     `Usuario.atendeComoBarbeiro` (só faz sentido em `papel: "DONO"`,
     `default(false)`) é um interruptor que o próprio dono liga/desliga via
@@ -306,6 +316,29 @@ src/app/
     aparece em `barbearia.usuarios`, consegue cadastrar disponibilidade, o
     cliente consegue agendar com ele, e ele consegue confirmar o próprio
     agendamento; desativando, some de `barbearia.usuarios` de novo.
+11. **Relatório de desempenho da equipe é só do barbeiro chefe (ou do
+    dono)** — `GET /api/relatorio-equipe` (`src/app/barbeiro/desempenho`,
+    link "Desempenho da equipe" na seção "Minha equipe") exige
+    `sessaoTemPrivilegioDeChefe()`, igual todo outro recurso de nível
+    chefe do app — um barbeiro contratado comum recebe 403. Por
+    `barbeiro`, no período escolhido: faturamento bruto e quantidade de
+    cortes `CONCLUIDO` (mesmo critério do `/api/financeiro` — só conta o
+    que realmente aconteceu); o corte mais feito (`servicoId` com mais
+    `CONCLUIDO`); quantos `CANCELADO` (filtrado por `atualizadoEm`, já que
+    `CANCELADO` é terminal — nada transiciona a partir dele, então esse
+    campo reflete de forma confiável o momento do cancelamento em si); e o
+    tempo médio entre `criadoEm` e `Agendamento.confirmadoEm` (campo novo,
+    ver "Modelo de dados" — precisa de um campo dedicado porque
+    `atualizadoEm` reflete a ÚLTIMA mudança do agendamento, não
+    especificamente a confirmação, e um `CONFIRMADO` pode avançar pra
+    `CONCLUIDO`/`CANCELADO` depois). O período é um intervalo livre de
+    datas (`?de=`/`?ate=`), não um enum fixo — cobre "um dia", "várias
+    semanas", "vários meses" ou "um ano inteiro" com a mesma lógica; a
+    tela oferece atalhos (Hoje/Esta semana/Este mês/Este ano) que só
+    preenchem os dois campos de data, sem um caminho de código separado
+    pra cada granularidade. Inclui o `DONO` com `atendeComoBarbeiro`
+    ativo (regra 10) na lista, já que ele também é um barbeiro de verdade
+    agora.
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -764,6 +797,26 @@ sessão).
   `callmebotApiKey` de um `DONO` desde a leva anterior — só faltava a
   tela). Fica só dentro do bloco "atendoComoBarbeiro" ativo, já que só
   faz sentido depois que o dono decide atender.
+- **Cancelamento direto de PENDENTE + relatório de desempenho do chefe**:
+  ver regras de negócio 9 (atualizada) e 11 pro detalhe completo. Resumo:
+  cliente cancelando um agendamento que o barbeiro ainda não confirmou
+  agora cancela na hora (antes virava um "pedido" igual um `CONFIRMADO`,
+  o que não fazia sentido já que não tinha nada pro barbeiro decidir);
+  `/meus-agendamentos` ajusta o texto do botão/aviso pra deixar claro
+  quando é direto e quando é um pedido. Nova aba
+  `/barbeiro/desempenho` (link "Desempenho da equipe" em "Minha equipe",
+  só chefe/dono) mostra faturamento bruto, corte mais feito, cortes
+  cancelados e tempo médio pra aceitar por barbeiro, num intervalo de
+  datas livre (não só dia/mês/ano fixos — dá pra escolher várias semanas
+  ou vários meses de uma vez). Precisou de um campo novo,
+  `Agendamento.confirmadoEm`, porque `atualizadoEm` não serve pra medir
+  "tempo até confirmar" de forma confiável (reflete a última mudança do
+  agendamento, não especificamente a confirmação). Testado de ponta a
+  ponta: cancelamento direto de PENDENTE não passa por
+  `cancelamentoSolicitadoEm`; cancelamento de CONFIRMADO continua sendo
+  só um pedido; `confirmadoEm` é preenchido ao confirmar; barbeiro comum
+  recebe 403 no relatório; chefe recebe os números corretos, incluindo
+  contagem de cancelados e tempo médio de resposta.
 
 ## Ambiente / variáveis necessárias
 
