@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
@@ -79,9 +80,18 @@ export async function POST(req: NextRequest) {
   const dados = schema.safeParse(await req.json());
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
-  const disponibilidade = await db.disponibilidade.create({
-    data: { ...dados.data, barbeiroId: sessao.usuarioId },
-  });
-
-  return NextResponse.json({ disponibilidade });
+  try {
+    const disponibilidade = await db.disponibilidade.create({
+      data: { ...dados.data, barbeiroId: sessao.usuarioId },
+    });
+    return NextResponse.json({ disponibilidade });
+  } catch (erro) {
+    // Mesmo dia + mesmo início + mesmo fim já cadastrado antes (trava de
+    // banco — ver @@unique em Disponibilidade no schema). Um horário
+    // diferente no mesmo dia continua permitido normalmente.
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
+      return NextResponse.json({ erro: "Você já tem esse horário cadastrado nesse dia" }, { status: 409 });
+    }
+    throw erro;
+  }
 }

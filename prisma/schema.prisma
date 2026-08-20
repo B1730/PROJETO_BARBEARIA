@@ -133,6 +133,10 @@ model Disponibilidade {
   horaFim       String   // "18:00"
 
   @@index([barbeiroId])
+  // Trava contra cadastrar a mesma janela duas vezes (mesmo dia da semana
+  // com o mesmo início/fim) — não bloqueia janelas diferentes no mesmo
+  // dia, só a exatamente igual.
+  @@unique([barbeiroId, diaDaSemana, horaInicio, horaFim])
 }
 
 model Agendamento {
