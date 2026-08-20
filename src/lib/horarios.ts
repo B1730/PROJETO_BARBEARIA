@@ -20,11 +20,21 @@ export async function buscarAgendamentosOcupados(
   const { barbeiroId, data } = params;
   const inicioDoDia = new Date(`${data}T00:00:00-03:00`);
   const fimDoDia = new Date(`${data}T23:59:59-03:00`);
+  // Busca também um pouco antes da meia-noite: um agendamento que COMEÇOU
+  // no dia anterior (ex: 23:45) pode, dependendo da duração do serviço,
+  // continuar ocupando a agenda depois da virada do dia. Sem essa margem,
+  // um agendamento assim ficava invisível pra quem consulta o dia seguinte
+  // — nem a checagem em memória nem a transação serializable de
+  // POST /api/agendamentos pegavam isso, porque a busca por dia nunca
+  // trazia essa linha. A janela de disponibilidade de uma barbearia não
+  // deveria realisticamente passar de poucas horas, então 6h de margem
+  // cobre qualquer serviço com duração razoável.
+  const margem = new Date(inicioDoDia.getTime() - 6 * 60 * 60 * 1000);
 
   const agendamentos = await cliente.agendamento.findMany({
     where: {
       barbeiroId,
-      data: { gte: inicioDoDia, lte: fimDoDia },
+      data: { gte: margem, lte: fimDoDia },
       status: { in: ["PENDENTE", "CONFIRMADO"] },
     },
     include: { servico: true },
@@ -69,13 +79,13 @@ export async function calcularHorariosLivres(params: {
   // Diferencia "o barbeiro não atende nesse dia da semana" (dado que falta)
   // de "atende, mas não sobrou horário livre" — pro cliente entender por
   // que a lista veio vazia em vez de parecer que o sistema quebrou.
-  if (disponibilidades.length === 0) return { horarios: [], ocupados: [], semExpediente: true };
+  if (disponibilidades.length === 0) return { horarios: [], ocupados: [], semExpediente: true, diaEncerrado: false };
   // Guarda defensiva: com duração 0 (ou negativa) o cursor do loop abaixo
   // nunca avança e a requisição trava para sempre. Hoje as rotas que chamam
   // essa função já validam duracaoMinutos > 0 via zod, mas essa função é
   // citada no CLAUDE.md como "a lógica mais delicada do sistema" — não deve
   // depender só da validação de quem chama.
-  if (duracaoMinutos <= 0) return { horarios: [], ocupados: [], semExpediente: false };
+  if (duracaoMinutos <= 0) return { horarios: [], ocupados: [], semExpediente: false, diaEncerrado: false };
 
   const agendamentosOcupados = await buscarAgendamentosOcupados(db, { barbeiroId, data });
 
@@ -85,6 +95,12 @@ export async function calcularHorariosLivres(params: {
   // continua vendo esses horários na tela (cinza, sem poder clicar), em
   // vez deles simplesmente desaparecerem da lista.
   const slotsOcupados: string[] = [];
+  // true se pelo menos uma janela de disponibilidade ainda não terminou —
+  // distingue "esse dia já passou/o expediente já encerrou" (nenhuma
+  // janela futura) de "está genuinamente lotado" (tem janela futura, mas
+  // tudo que sobrou já foi ocupado), pra não mostrar a mesma mensagem
+  // confusa nos dois casos.
+  let algumaJanelaFutura = false;
 
   for (const janela of disponibilidades) {
     const [horaIni, minIni] = janela.horaInicio.split(":").map(Number);
@@ -97,6 +113,7 @@ export async function calcularHorariosLivres(params: {
     cursor.setUTCHours(horaIni + 3, minIni, 0, 0);
     const fimJanela = new Date(dataBase);
     fimJanela.setUTCHours(horaFim + 3, minFim, 0, 0);
+    if (fimJanela.getTime() > agora.getTime()) algumaJanelaFutura = true;
 
     while (cursor.getTime() + duracaoMinutos * 60000 <= fimJanela.getTime()) {
       const fimDoSlot = new Date(cursor.getTime() + duracaoMinutos * 60000);
@@ -124,5 +141,6 @@ export async function calcularHorariosLivres(params: {
     horarios: Array.from(new Set(slotsLivres)).sort(),
     ocupados: Array.from(new Set(slotsOcupados)).sort(),
     semExpediente: false,
+    diaEncerrado: !algumaJanelaFutura,
   };
 }

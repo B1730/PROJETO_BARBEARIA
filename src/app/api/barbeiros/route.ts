@@ -10,13 +10,21 @@ const schema = z.object({
   email: z.string().email(),
 });
 
-// GET: lista os barbeiros da barbearia do usuário logado
+// GET: lista os barbeiros da barbearia do usuário logado (com e-mail —
+// dado sensível, só pra dono/chefe, que é quem realmente "gerencia" a
+// equipe). Um barbeiro comum que chame isso vê só o próprio registro.
 export async function GET() {
   const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
+  const ehChefeOuDono = sessao.papel === "DONO" || (await sessaoTemPrivilegioDeChefe(sessao));
+
   const barbeiros = await db.usuario.findMany({
-    where: { barbeariaId: sessao.barbeariaId!, papel: "BARBEIRO" },
+    where: {
+      barbeariaId: sessao.barbeariaId!,
+      papel: "BARBEIRO",
+      ...(ehChefeOuDono ? {} : { id: sessao.usuarioId }),
+    },
     select: { id: true, nome: true, email: true, criadoEm: true, ehChefe: true },
   });
 

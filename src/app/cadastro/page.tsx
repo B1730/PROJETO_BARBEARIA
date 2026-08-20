@@ -17,6 +17,11 @@ function FormularioCadastro() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const papel = searchParams.get("papel") === "CLIENTE" ? "CLIENTE" : "DONO";
+  // Pra quando o cliente clica "criar conta" no meio de um agendamento —
+  // sem isso, ele terminava o cadastro e caía na home, perdendo o corte/
+  // barbeiro/horário que já tinha escolhido.
+  const nextBruto = searchParams.get("next");
+  const next = nextBruto && /^\/(?!\/|\\)/.test(nextBruto) ? nextBruto : null;
 
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
@@ -40,7 +45,7 @@ function FormularioCadastro() {
       setErro(dados.erro || "Não foi possível cadastrar");
       return;
     }
-    router.push(papel === "DONO" ? "/admin" : "/");
+    router.push(papel === "DONO" ? "/admin" : next || "/");
   }
 
   return (
@@ -51,7 +56,10 @@ function FormularioCadastro() {
           ? "Você vira o dono/administrador — depois adiciona barbeiros por dentro do painel."
           : "Com sua conta você consegue solicitar agendamentos nas barbearias."}
       </p>
-      <a href={`/api/auth/google?intent=${papel}`} className="btn-secondary w-full flex items-center justify-center gap-2 mb-6">
+      <a
+        href={`/api/auth/google?intent=${papel}${next ? `&next=${encodeURIComponent(next)}` : ""}`}
+        className="btn-secondary w-full flex items-center justify-center gap-2 mb-6"
+      >
         Cadastrar com Google
       </a>
       <div className="flex items-center gap-3 mb-6">
@@ -74,7 +82,7 @@ function FormularioCadastro() {
 
       <p className="text-sm text-ink/60 text-center mt-6">
         Já tem conta?{" "}
-        <a className="underline" href="/entrar">Entrar</a>
+        <a className="underline" href={`/entrar${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Entrar</a>
       </p>
     </main>
   );

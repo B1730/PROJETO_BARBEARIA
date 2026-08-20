@@ -30,10 +30,14 @@ export async function PATCH(req: NextRequest) {
   const dados = schema.safeParse(await req.json());
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
+  // Normaliza pra só dígitos — quem digita com formatação (+55 (11) 99999-9999)
+  // não deve deixar o link "Falar no WhatsApp" (mostrado ao cliente) quebrado.
+  const whatsappLimpo = dados.data.whatsapp ? dados.data.whatsapp.replace(/\D/g, "") : "";
+
   const usuario = await db.usuario.update({
     where: { id: sessao.usuarioId },
     data: {
-      whatsapp: dados.data.whatsapp || null,
+      whatsapp: whatsappLimpo || null,
       callmebotApiKey: dados.data.callmebotApiKey || null,
       ...(dados.data.fotoUrl !== undefined ? { fotoUrl: dados.data.fotoUrl || null } : {}),
     },

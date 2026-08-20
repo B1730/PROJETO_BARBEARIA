@@ -25,6 +25,23 @@ function pegarTransportador() {
   return transportador;
 }
 
+// `nome`/`barbeariaNome`/`convidadoPorNome` vêm de campos que qualquer
+// pessoa pode preencher livremente (nome digitado no convite, nome da
+// barbearia no autocadastro público de dono) — sem isso, davam pra injetar
+// HTML/links no corpo do e-mail (phishing saindo do Gmail real configurado)
+// ou quebrar o cabeçalho do "from"/"subject" com uma quebra de linha.
+function limparParaEmail(texto: string): string {
+  return texto.replace(/[\r\n]+/g, " ").trim();
+}
+function escaparHtml(texto: string): string {
+  return texto
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Ao contrário de notificarNovoAgendamento() (que falha em silêncio de
 // propósito, por cima de um agendamento que já foi criado), aqui o e-mail
 // é o ÚNICO jeito da pessoa convidada completar o cadastro — uma falha
@@ -37,15 +54,19 @@ export async function enviarEmailConvite(params: {
   convidadoPorNome: string;
   link: string;
 }): Promise<void> {
+  const nome = limparParaEmail(params.nome);
+  const barbeariaNome = limparParaEmail(params.barbeariaNome);
+  const convidadoPorNome = limparParaEmail(params.convidadoPorNome);
+
   const transportador = pegarTransportador();
   await transportador.sendMail({
-    from: `"${params.barbeariaNome}" <${process.env.GMAIL_USER}>`,
+    from: `"${barbeariaNome}" <${process.env.GMAIL_USER}>`,
     to: params.para,
-    subject: `Convite para ${params.barbeariaNome}`,
+    subject: `Convite para ${barbeariaNome}`,
     html: `
-      <p>Olá, ${params.nome}!</p>
-      <p><strong>${params.convidadoPorNome}</strong> te convidou pra ser barbeiro em
-      <strong>${params.barbeariaNome}</strong>.</p>
+      <p>Olá, ${escaparHtml(nome)}!</p>
+      <p><strong>${escaparHtml(convidadoPorNome)}</strong> te convidou pra ser barbeiro em
+      <strong>${escaparHtml(barbeariaNome)}</strong>.</p>
       <p>Clique no link abaixo pra confirmar seu e-mail e criar sua senha:</p>
       <p><a href="${params.link}">${params.link}</a></p>
       <p>Esse link vale por 3 dias.</p>
@@ -64,15 +85,18 @@ export async function enviarEmailBoasVindas(params: {
   urlLogin: string;
   urlBarbearia: string;
 }): Promise<void> {
+  const nome = limparParaEmail(params.nome);
+  const barbeariaNome = limparParaEmail(params.barbeariaNome);
+
   try {
     const transportador = pegarTransportador();
     await transportador.sendMail({
-      from: `"${params.barbeariaNome}" <${process.env.GMAIL_USER}>`,
+      from: `"${barbeariaNome}" <${process.env.GMAIL_USER}>`,
       to: params.para,
-      subject: `Bem-vindo(a) à ${params.barbeariaNome}!`,
+      subject: `Bem-vindo(a) à ${barbeariaNome}!`,
       html: `
-        <p>Olá, ${params.nome}!</p>
-        <p>Seu cadastro em <strong>${params.barbeariaNome}</strong> foi confirmado.</p>
+        <p>Olá, ${escaparHtml(nome)}!</p>
+        <p>Seu cadastro em <strong>${escaparHtml(barbeariaNome)}</strong> foi confirmado.</p>
         <p>Pra acessar seu painel quando quiser (agenda, horários, cortes), use:
         <a href="${params.urlLogin}">${params.urlLogin}</a></p>
         <p>E esse é o link que seus clientes usam pra agendar horário com você:

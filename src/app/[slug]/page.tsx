@@ -18,6 +18,7 @@ export default function PaginaBarbearia() {
   const [horarios, setHorarios] = useState<string[]>([]);
   const [ocupados, setOcupados] = useState<string[]>([]);
   const [semExpediente, setSemExpediente] = useState(false);
+  const [diaEncerrado, setDiaEncerrado] = useState(false);
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [carregandoHorarios, setCarregandoHorarios] = useState(false);
@@ -45,6 +46,7 @@ export default function PaginaBarbearia() {
           setHorarios(d.horarios || []);
           setOcupados(d.ocupados || []);
           setSemExpediente(!!d.semExpediente);
+          setDiaEncerrado(!!d.diaEncerrado);
           setCarregandoHorarios(false);
         }
       });
@@ -155,6 +157,8 @@ export default function PaginaBarbearia() {
                 <p className="text-sm text-ink/50">
                   {semExpediente
                     ? "Esse profissional não atende nesse dia da semana. Escolha outra data."
+                    : diaEncerrado
+                    ? "O expediente desse dia já encerrou. Escolha outra data."
                     : "Nenhum horário livre neste dia — todos os horários já foram preenchidos."}
                 </p>
               )}
@@ -200,7 +204,7 @@ export default function PaginaBarbearia() {
               {mensagem.includes("conta") && (
                 <>
                   <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a> ou{" "}
-                  <a className="underline" href="/cadastro?papel=CLIENTE">criar conta</a>
+                  <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>criar conta</a>
                 </>
               )}
             </p>
@@ -208,7 +212,7 @@ export default function PaginaBarbearia() {
           {barbeiroConfirmado?.whatsapp && (
             <a
               className="btn-secondary inline-block mt-3"
-              href={`https://wa.me/${barbeiroConfirmado.whatsapp}`}
+              href={`https://wa.me/${barbeiroConfirmado.whatsapp.replace(/\D/g, "")}`}
               target="_blank"
               rel="noopener noreferrer"
             >

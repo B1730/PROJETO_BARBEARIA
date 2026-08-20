@@ -456,6 +456,44 @@ sessão).
   (minuto 00 ou 30) — os `<input type="time">` em `barbeiro/page.tsx`
   ganharam `step={1800}` (30min) pra já guiar isso na interface. Evita
   janelas de expediente com início/fim "quebrado" (ex: 09:15).
+- **Terceira auditoria completa + correções de segurança/lógica**: nova
+  varredura (rotas de API, frontend, schema/libs), focada no que foi
+  adicionado desde a segunda auditoria (chefe, convite por e-mail, split
+  Google). Encontrou 14 itens; os críticos/altos/médios (10) foram
+  corrigidos nesta leva: e-mails de convite/boas-vindas passaram a
+  escapar HTML e remover quebra de linha de `nome`/`barbeariaNome`/
+  `convidadoPorNome` antes de interpolar (`src/lib/email.ts`) — sem isso,
+  como o autocadastro de dono é público e sem verificação, dava pra
+  qualquer um mandar HTML arbitrário (phishing) saindo do Gmail real
+  configurado, pra qualquer endereço; `PATCH /api/barbeiros/[id]`
+  (promover/rebaixar chefe) passou a rodar em transação `Serializable`
+  igual `POST /api/agendamentos`, fechando uma corrida que podia deixar
+  dois chefes simultâneos na mesma barbearia; `GET /api/barbeiros` parou
+  de devolver e-mail dos colegas pra barbeiro comum (só dono/chefe, igual
+  já valia pro `POST`); `buscarAgendamentosOcupados()`
+  (`src/lib/horarios.ts`) ganhou uma margem de 6h antes da meia-noite na
+  busca, fechando uma lacuna onde um agendamento que começa perto da
+  virada do dia e invade o dia seguinte ficava invisível pra quem
+  consultava esse dia seguinte; número de WhatsApp passou a ser
+  normalizado (só dígitos) ao salvar em `PATCH /api/perfil`, e o link
+  "Falar no WhatsApp" no cliente também sanitiza defensivamente;
+  `/convite/aceitar` mostra um aviso se o navegador já tiver uma sessão
+  logada, antes de trocar silenciosamente pra conta nova; o painel do
+  chefe (`barbeiro/page.tsx`) passou a atualizar a seção "Minha equipe"
+  no mesmo polling de 8s que já existia; `calcularHorariosLivres()` ganhou
+  um terceiro estado (`diaEncerrado`) pra diferenciar "esse dia já
+  passou/expediente encerrou" de "está genuinamente lotado", evitando uma
+  mensagem confusa; o link "criar conta" (e o futuro "Cadastrar com
+  Google") na página da barbearia passou a propagar `next=`, e
+  `cadastro/page.tsx` passou a honrar isso depois do cadastro — antes o
+  cliente perdia o corte/horário escolhido e caía na home; e
+  `POST /api/barbeiros/aceitar-convite` passou a logar automaticamente na
+  conta existente numa corrida de e-mail duplicado, igual
+  `google/finalizar` já fazia, em vez de só devolver 409. Os itens
+  restantes (baixa prioridade — sistemático de `fetch()` sem tratamento
+  de erro de rede, duplicação de upload, corrida no seletor de período do
+  admin, etc.) ficaram como backlog, a maioria já vinha de uma auditoria
+  anterior.
 
 ## Ambiente / variáveis necessárias
 

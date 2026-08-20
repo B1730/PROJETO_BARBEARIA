@@ -21,6 +21,7 @@ function FormularioAceitarConvite() {
   const [convite, setConvite] = useState<Convite | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erroConvite, setErroConvite] = useState("");
+  const [sessaoAtual, setSessaoAtual] = useState<{ nome: string } | null>(null);
 
   const [senha, setSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
@@ -43,6 +44,12 @@ function FormularioAceitarConvite() {
         }
         setCarregando(false);
       });
+    // Se o navegador já tiver uma sessão logada, avisa antes de deixar
+    // continuar — confirmar o convite troca pra essa conta nova sem
+    // perguntar, e sem esse aviso a pessoa não teria como saber disso.
+    fetch("/api/auth/sessao")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.usuario) setSessaoAtual({ nome: d.usuario.nome }); });
   }, [token]);
 
   async function confirmar(e: React.FormEvent) {
@@ -90,6 +97,12 @@ function FormularioAceitarConvite() {
         <p><strong>Nome:</strong> {convite?.nome}</p>
         <p><strong>E-mail:</strong> {convite?.email}</p>
       </div>
+      {sessaoAtual && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3 mb-6">
+          Você está logado como <strong>{sessaoAtual.nome}</strong> nesse navegador. Confirmar esse
+          convite vai trocar pra essa conta nova de barbeiro.
+        </p>
+      )}
       <form onSubmit={confirmar} className="space-y-4">
         <input
           className="input"

@@ -37,7 +37,7 @@ const schema = z.object({
 // POST: confirma o convite e cria a conta — só agora o Usuario passa a
 // existir. Revalida o token e reconfere o e-mail (corrida: alguém pode ter
 // se cadastrado com esse e-mail por outro caminho enquanto o convite
-// estava pendente), mesmo padrão de src/app/api/auth/google/finalizar/route.ts.
+// estava pendente).
 export async function POST(req: NextRequest) {
   const dados = schema.safeParse(await req.json());
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
@@ -47,8 +47,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "Convite expirado ou inválido — peça pra te convidarem de novo" }, { status: 400 });
   }
 
+  let usuario;
   try {
-    const usuario = await db.usuario.create({
+    usuario = await db.usuario.create({
       data: {
         nome: identidade.nome,
         email: identidade.email,
@@ -58,29 +59,35 @@ export async function POST(req: NextRequest) {
         barbeariaId: identidade.barbeariaId,
       },
     });
-
-    await criarSessao({ usuarioId: usuario.id, papel: usuario.papel, barbeariaId: usuario.barbeariaId });
-
-    // Boas-vindas com os dois links que ele vai precisar: o painel dele
-    // (login) e a página pública da barbearia (pra divulgar pros próprios
-    // clientes). Falha em silêncio — a conta já foi criada e ele já está
-    // logado, isso é só um extra.
-    const barbearia = await db.barbearia.findUnique({ where: { id: identidade.barbeariaId }, select: { nome: true, slug: true } });
-    if (barbearia) {
-      await enviarEmailBoasVindas({
-        para: identidade.email,
-        nome: identidade.nome,
-        barbeariaNome: barbearia.nome,
-        urlLogin: `${req.nextUrl.origin}/entrar`,
-        urlBarbearia: `${req.nextUrl.origin}/${barbearia.slug}`,
-      });
-    }
-
-    return NextResponse.json({ ok: true });
   } catch (erro) {
     if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
-      return NextResponse.json({ erro: "Este e-mail já está cadastrado — entre normalmente" }, { status: 409 });
+      // Corrida: alguém já criou essa conta (por outro caminho) enquanto
+      // o convite estava pendente — loga na conta que já existe em vez de
+      // só devolver um erro, mesmo padrão de google/finalizar/route.ts.
+      // Não mexe na senha dela: só o dono da conta que já existe define
+      // isso, o convite não pode sobrescrever silenciosamente.
+      usuario = await db.usuario.findUniqueOrThrow({ where: { email: identidade.email } });
+    } else {
+      throw erro;
     }
-    throw erro;
   }
+
+  await criarSessao({ usuarioId: usuario.id, papel: usuario.papel, barbeariaId: usuario.barbeariaId });
+
+  // Boas-vindas com os dois links que ele vai precisar: o painel dele
+  // (login) e a página pública da barbearia (pra divulgar pros próprios
+  // clientes). Falha em silêncio — a conta já foi criada e ele já está
+  // logado, isso é só um extra.
+  const barbearia = await db.barbearia.findUnique({ where: { id: identidade.barbeariaId }, select: { nome: true, slug: true } });
+  if (barbearia) {
+    await enviarEmailBoasVindas({
+      para: identidade.email,
+      nome: identidade.nome,
+      barbeariaNome: barbearia.nome,
+      urlLogin: `${req.nextUrl.origin}/entrar`,
+      urlBarbearia: `${req.nextUrl.origin}/${barbearia.slug}`,
+    });
+  }
+
+  return NextResponse.json({ ok: true });
 }

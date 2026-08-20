@@ -164,9 +164,15 @@ export default function PainelBarbeiro() {
 
   useEffect(() => {
     // Faz o pedido do cliente aparecer sozinho na agenda, sem precisar de reload.
-    const intervalo = setInterval(() => carregarTudo(false), INTERVALO_POLLING_MS);
+    // Pro chefe, também atualiza a agenda/faturamento da equipe — sem isso,
+    // "Minha equipe" só mudava quando o chefe trocava o filtro de período ou
+    // recarregava a página manualmente.
+    const intervalo = setInterval(() => {
+      carregarTudo(false);
+      if (ehChefe) carregarEquipe();
+    }, INTERVALO_POLLING_MS);
     return () => clearInterval(intervalo);
-  }, []);
+  }, [ehChefe]);
 
   async function responder(id: string, status: "CONFIRMADO" | "RECUSADO") {
     setErro("");
