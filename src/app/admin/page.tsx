@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Cabecalho from "@/components/Cabecalho";
 
 type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
@@ -39,20 +40,20 @@ export default function PainelAdmin() {
     return dados.url as string;
   }
 
-  async function carregarTudo(mostrarSpinner = true) {
+  // Separado de carregarFinanceiro: barbeiros/serviços não dependem do
+  // período do faturamento, então não faz sentido refazer essas duas
+  // buscas (nem mostrar o spinner de página inteira) só porque o dono
+  // trocou o filtro de dia/mês/ano.
+  async function carregarBarbeirosEServicos(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
-    const [bResp, sResp, fResp] = await Promise.all([
-      fetch("/api/barbeiros"),
-      fetch("/api/servicos"),
-      fetch(`/api/financeiro?periodo=${periodo}`),
-    ]);
+    const [bResp, sResp] = await Promise.all([fetch("/api/barbeiros"), fetch("/api/servicos")]);
 
-    const semAcesso = [bResp, sResp, fResp].some((r) => r.status === 401 || r.status === 403);
+    const semAcesso = [bResp, sResp].some((r) => r.status === 401 || r.status === 403);
     if (semAcesso) {
       router.push("/entrar");
       return;
     }
-    if (!bResp.ok || !sResp.ok || !fResp.ok) {
+    if (!bResp.ok || !sResp.ok) {
       if (mostrarSpinner) {
         setErro("Não foi possível carregar os dados do painel.");
         setCarregando(false);
@@ -60,14 +61,24 @@ export default function PainelAdmin() {
       return;
     }
 
-    const [b, s, f] = await Promise.all([bResp.json(), sResp.json(), fResp.json()]);
+    const [b, s] = await Promise.all([bResp.json(), sResp.json()]);
     setBarbeiros(b.barbeiros || []);
     setServicos(s.servicos || []);
-    setFinanceiro(f);
     if (mostrarSpinner) setCarregando(false);
   }
 
-  useEffect(() => { carregarTudo(); }, [periodo]);
+  async function carregarFinanceiro(periodoAtual: "dia" | "mes" | "ano") {
+    const resp = await fetch(`/api/financeiro?periodo=${periodoAtual}`);
+    if (resp.status === 401 || resp.status === 403) {
+      router.push("/entrar");
+      return;
+    }
+    if (!resp.ok) return;
+    setFinanceiro(await resp.json());
+  }
+
+  useEffect(() => { carregarBarbeirosEServicos(); }, []);
+  useEffect(() => { carregarFinanceiro(periodo); }, [periodo]);
 
   async function adicionarBarbeiro(e: React.FormEvent) {
     e.preventDefault();
@@ -87,7 +98,7 @@ export default function PainelAdmin() {
     }
     setNovoBarbeiroNome(""); setNovoBarbeiroEmail("");
     setSucesso("Convite enviado — ele(a) recebe um e-mail pra confirmar e criar a senha.");
-    carregarTudo(false);
+    carregarBarbeirosEServicos(false);
   }
 
   async function alternarChefe(b: Barbeiro) {
@@ -106,7 +117,7 @@ export default function PainelAdmin() {
       return;
     }
     setSucesso(b.ehChefe ? "Barbeiro deixou de ser chefe." : "Barbeiro promovido a chefe.");
-    carregarTudo(false);
+    carregarBarbeirosEServicos(false);
   }
 
   async function adicionarServico(e: React.FormEvent) {
@@ -144,7 +155,7 @@ export default function PainelAdmin() {
     }
     setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30"); setNovoServicoImagem(null);
     setSucesso("Corte cadastrado.");
-    carregarTudo(false);
+    carregarBarbeirosEServicos(false);
   }
 
   if (carregando) {
@@ -228,8 +239,7 @@ export default function PainelAdmin() {
             <div key={s.id} className="card flex justify-between items-center">
               <div className="flex items-center gap-3">
                 {s.imagemUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.imagemUrl} alt={s.nome} className="h-10 w-10 rounded-md object-cover" />
+                  <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
                 )}
                 <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
               </div>

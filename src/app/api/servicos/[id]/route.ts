@@ -23,7 +23,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const existente = await garantirDono(params.id, sessao.barbeariaId!);
   if (!existente) return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
   const servico = await db.servico.update({ where: { id: params.id }, data: dados.data });

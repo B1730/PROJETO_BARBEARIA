@@ -20,10 +20,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const sessao = await exigirSessao(["DONO"]);
   if (sessao instanceof NextResponse) return sessao;
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
-  const alvo = await db.usuario.findUnique({ where: { id: params.id } });
+  const alvo = await db.usuario.findUnique({ where: { id: params.id }, select: { id: true, papel: true, barbeariaId: true } });
   if (!alvo || alvo.papel !== "BARBEIRO" || alvo.barbeariaId !== sessao.barbeariaId) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { criarHashSenha, criarSessao } from "@/lib/auth";
+import { criarHashSenha, criarSessao, normalizarEmail } from "@/lib/auth";
 import { gerarSlug } from "@/lib/slug";
 
 // Cadastro público só cria CLIENTE ou DONO (que cria a própria barbearia).
@@ -20,12 +20,13 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
   const dados = schema.safeParse(body);
   if (!dados.success) {
     return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   }
-  const { nome, email, senha, papel, nomeBarbearia } = dados.data;
+  const { nome, senha, papel, nomeBarbearia } = dados.data;
+  const email = normalizarEmail(dados.data.email);
 
   if (papel === "DONO" && !nomeBarbearia) {
     return NextResponse.json({ erro: "Informe o nome da barbearia" }, { status: 400 });

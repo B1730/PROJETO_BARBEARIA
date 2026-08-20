@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { criarSessao, criarTokenGooglePendente } from "@/lib/auth";
+import { criarSessao, criarTokenGooglePendente, normalizarEmail } from "@/lib/auth";
 
 const COOKIE_ESTADO = "google_oauth_estado";
 const COOKIE_VINCULO = "google_pendente_vinculo";
@@ -76,9 +76,10 @@ export async function GET(req: NextRequest) {
     return erroRedirect("Não foi possível confirmar o login com o Google");
   }
 
-  const email = payload.email as string | undefined;
-  const nome = (payload.name as string | undefined) || email;
-  if (!email || !payload.email_verified) return erroRedirect("Seu e-mail do Google precisa estar verificado");
+  const emailBruto = payload.email as string | undefined;
+  const nome = (payload.name as string | undefined) || emailBruto;
+  if (!emailBruto || !payload.email_verified) return erroRedirect("Seu e-mail do Google precisa estar verificado");
+  const email = normalizarEmail(emailBruto);
 
   const usuario = await db.usuario.findUnique({ where: { email } });
 

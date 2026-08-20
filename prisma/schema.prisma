@@ -8,8 +8,14 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Usado só pelo `prisma migrate`/`db push` — precisa de uma conexão
+  // direta (não pooler) porque DDL não roda bem via pgbouncer em modo
+  // transação. Quando DATABASE_URL apontar pro pooler do Supabase (porta
+  // 6543, ver "Ambiente" no CLAUDE.md), DIRECT_URL continua apontando pra
+  // conexão direta (porta 5432) que já existia antes.
+  directUrl = env("DIRECT_URL")
 }
 
 enum PapelUsuario {
@@ -75,8 +81,11 @@ model Usuario {
 
   // Barbeiros e donos pertencem a uma barbearia. Clientes podem agendar em
   // qualquer barbearia, então barbeariaId fica nulo para eles.
+  // onDelete Restrict (igual Servico/Agendamento) — sem isso, apagar uma
+  // Barbearia deixaria barbeiro/dono órfãos com barbeariaId nulo, o que
+  // contradiz a regra "barbeiros e donos têm barbeariaId preenchido".
   barbeariaId   String?
-  barbearia     Barbearia?    @relation(fields: [barbeariaId], references: [id])
+  barbearia     Barbearia?    @relation(fields: [barbeariaId], references: [id], onDelete: Restrict)
 
   // Relações específicas de barbeiro
   disponibilidades   Disponibilidade[]
@@ -132,7 +141,9 @@ model Disponibilidade {
   horaInicio    String   // "09:00"
   horaFim       String   // "18:00"
 
-  @@index([barbeiroId])
+  // Sem índice solto em barbeiroId: a constraint abaixo já cobre buscas só
+  // por barbeiroId via prefixo esquerdo (mesmo padrão usado em Agendamento,
+  // ver @@unique([barbeiroId, data]) — um índice avulso ali seria redundante).
   // Trava contra cadastrar a mesma janela duas vezes (mesmo dia da semana
   // com o mesmo início/fim) — não bloqueia janelas diferentes no mesmo
   // dia, só a exatamente igual.
@@ -179,6 +190,10 @@ model Agendamento {
   atualizadoEm  DateTime          @updatedAt
 
   @@index([barbeariaId, data])
+  // Usado por GET /api/agendamentos quando CLIENTE consulta o próprio
+  // histórico (tela /meus-agendamentos) — sem filtro de data no caso comum,
+  // então precisa do próprio índice (Postgres não indexa FK automaticamente).
+  @@index([clienteId])
   // Trava de banco contra double-booking: garante que duas requisições
   // concorrentes não consigam criar dois agendamentos pro mesmo barbeiro no
   // mesmo instante, mesmo que ambas passem pela revalidação em memória.

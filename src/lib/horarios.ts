@@ -31,13 +31,17 @@ export async function buscarAgendamentosOcupados(
   // cobre qualquer serviço com duração razoável.
   const margem = new Date(inicioDoDia.getTime() - 6 * 60 * 60 * 1000);
 
+  // select mínimo (não include do Servico inteiro) — essa função roda
+  // dentro da transação Serializable de criar agendamento
+  // (POST /api/agendamentos), então quanto menos ela trouxer, menos tempo
+  // a transação fica com lock aberto.
   const agendamentos = await cliente.agendamento.findMany({
     where: {
       barbeiroId,
       data: { gte: margem, lte: fimDoDia },
       status: { in: ["PENDENTE", "CONFIRMADO"] },
     },
-    include: { servico: true },
+    select: { data: true, duracaoMinutos: true, servico: { select: { duracaoMinutos: true } } },
   });
 
   return agendamentos.map((ag) => {

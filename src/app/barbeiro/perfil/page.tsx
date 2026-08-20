@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import Cabecalho from "@/components/Cabecalho";
 
 export default function PerfilBarbeiro() {
@@ -90,8 +91,7 @@ export default function PerfilBarbeiro() {
           <form onSubmit={salvar} className="space-y-4">
             <div className="flex items-center gap-4">
               {fotoUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={fotoUrl} alt="Sua foto" className="h-16 w-16 rounded-full object-cover" />
+                <Image src={fotoUrl} alt="Sua foto" width={64} height={64} className="h-16 w-16 rounded-full object-cover" />
               )}
               <div className="flex-1">
                 <label className="text-sm text-ink/60 mb-1 block">Foto de perfil (opcional)</label>

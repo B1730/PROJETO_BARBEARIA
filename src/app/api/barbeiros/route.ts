@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
-import { criarTokenConviteBarbeiro } from "@/lib/auth";
+import { criarTokenConviteBarbeiro, normalizarEmail } from "@/lib/auth";
 import { enviarEmailConvite } from "@/lib/email";
 
 const schema = z.object({
@@ -46,10 +46,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
   }
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
+  const email = normalizarEmail(dados.data.email);
 
-  const jaExiste = await db.usuario.findUnique({ where: { email: dados.data.email } });
+  const jaExiste = await db.usuario.findUnique({ where: { email } });
   if (jaExiste) {
     return NextResponse.json({ erro: "Este e-mail já está em uso" }, { status: 409 });
   }
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
   if (!barbearia) return NextResponse.json({ erro: "Barbearia não encontrada" }, { status: 404 });
 
   const token = await criarTokenConviteBarbeiro({
-    email: dados.data.email,
+    email,
     nome: dados.data.nome,
     barbeariaId: sessao.barbeariaId!,
     convidadoPor: convidadoPor?.nome ?? "Alguém da equipe",
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
 
   try {
     await enviarEmailConvite({
-      para: dados.data.email,
+      para: email,
       nome: dados.data.nome,
       barbeariaNome: barbearia.nome,
       convidadoPorNome: convidadoPor?.nome ?? "Alguém da equipe",
@@ -81,5 +82,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "Não foi possível enviar o convite, tente de novo" }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true, email: dados.data.email });
+  return NextResponse.json({ ok: true, email });
 }

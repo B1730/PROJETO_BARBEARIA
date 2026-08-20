@@ -27,18 +27,22 @@ export async function PATCH(req: NextRequest) {
   const sessao = await exigirSessao(["BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
-  // Normaliza pra só dígitos — quem digita com formatação (+55 (11) 99999-9999)
-  // não deve deixar o link "Falar no WhatsApp" (mostrado ao cliente) quebrado.
-  const whatsappLimpo = dados.data.whatsapp ? dados.data.whatsapp.replace(/\D/g, "") : "";
-
+  // !== undefined em cada campo — sem isso, uma chamada que só manda um dos
+  // três campos (ex.: só a foto) zerava os outros dois silenciosamente, já
+  // que todos são opcionais no schema. Hoje a única tela que chama isso
+  // sempre manda os três juntos, mas o contrato da API não deveria depender
+  // disso.
   const usuario = await db.usuario.update({
     where: { id: sessao.usuarioId },
     data: {
-      whatsapp: whatsappLimpo || null,
-      callmebotApiKey: dados.data.callmebotApiKey || null,
+      // Normaliza pra só dígitos — quem digita com formatação
+      // (+55 (11) 99999-9999) não deve deixar o link "Falar no WhatsApp"
+      // (mostrado ao cliente) quebrado.
+      ...(dados.data.whatsapp !== undefined ? { whatsapp: dados.data.whatsapp.replace(/\D/g, "") || null } : {}),
+      ...(dados.data.callmebotApiKey !== undefined ? { callmebotApiKey: dados.data.callmebotApiKey || null } : {}),
       ...(dados.data.fotoUrl !== undefined ? { fotoUrl: dados.data.fotoUrl || null } : {}),
     },
     select: { id: true, nome: true, email: true, whatsapp: true, callmebotApiKey: true, fotoUrl: true },

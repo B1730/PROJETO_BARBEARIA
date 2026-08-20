@@ -16,6 +16,15 @@ export type SessaoPayload = {
   barbeariaId: string | null;
 };
 
+// Aplicar em toda leitura E escrita de e-mail (login, cadastro, convite de
+// barbeiro, callback do Google, etc.) — sem isso, "Fulano@x.com" e
+// "fulano@x.com" viram duas contas diferentes (o @unique do schema compara
+// bytes crus, não é case-insensitive), e um cliente cujo teclado
+// auto-capitalizou o e-mail no login não encontra a própria conta.
+export function normalizarEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
 export async function criarHashSenha(senha: string) {
   return bcrypt.hash(senha, 10);
 }

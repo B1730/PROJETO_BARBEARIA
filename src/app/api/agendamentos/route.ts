@@ -3,7 +3,7 @@ import { Prisma, StatusAgendamento } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
-import { buscarAgendamentosOcupados, conflitaComOcupados } from "@/lib/horarios";
+import { buscarAgendamentosOcupados, calcularHorariosLivres, conflitaComOcupados } from "@/lib/horarios";
 import { notificarNovoAgendamento } from "@/lib/whatsapp";
 
 const schema = z.object({
@@ -24,35 +24,60 @@ export async function POST(req: NextRequest) {
   const sessao = await exigirSessao(["CLIENTE"]);
   if (sessao instanceof NextResponse) return sessao;
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   const { barbeiroId, servicoId, data, hora } = dados.data;
 
+  // servico, barbeiro e cliente não dependem um do outro — buscar os três em
+  // paralelo. `barbeiros` sem filtro (todos os preços customizados desse
+  // serviço, não só o desse barbeiro) deixa derivar as duas perguntas que
+  // antes eram duas queries separadas ("algum barbeiro tem preço
+  // customizado pra esse corte" e "esse barbeiro específico tem") sem
+  // precisar de uma terceira consulta.
+  const [servico, barbeiro, cliente] = await Promise.all([
+    db.servico.findUnique({ where: { id: servicoId }, include: { barbeiros: true } }),
+    db.usuario.findUnique({
+      where: { id: barbeiroId },
+      select: { id: true, nome: true, papel: true, barbeariaId: true, whatsapp: true, callmebotApiKey: true },
+    }),
+    db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } }),
+  ]);
   // barbeariaId nunca vem do cliente — é sempre derivado do serviço, pra
   // não deixar misturar servicoId de uma barbearia com barbeiroId de outra.
-  const servico = await db.servico.findUnique({
-    where: { id: servicoId },
-    include: { barbeiros: { where: { barbeiroId } } },
-  });
   if (!servico || !servico.ativo) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
-
-  const barbeiro = await db.usuario.findUnique({ where: { id: barbeiroId } });
   if (!barbeiro || barbeiro.papel !== "BARBEIRO" || barbeiro.barbeariaId !== servico.barbeariaId) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }
 
   // Se o serviço tem preços customizados por barbeiro, esse barbeiro precisa
   // estar entre eles — senão ele nem oferece esse corte.
-  const algumPrecoCustomizado = await db.servicoBarbeiro.findFirst({ where: { servicoId } });
-  if (algumPrecoCustomizado && servico.barbeiros.length === 0) {
+  const precoDesseBarbeiro = servico.barbeiros.find((b) => b.barbeiroId === barbeiroId);
+  if (servico.barbeiros.length > 0 && !precoDesseBarbeiro) {
     return NextResponse.json({ erro: "Esse barbeiro não realiza esse serviço" }, { status: 400 });
   }
 
-  const precoCobrado = servico.barbeiros[0]?.preco ?? servico.precoBase;
+  const precoCobrado = precoDesseBarbeiro?.preco ?? servico.precoBase;
   const inicio = new Date(`${data}T${hora}:00-03:00`);
   const fim = new Date(inicio.getTime() + servico.duracaoMinutos * 60000);
+
+  // Confere se esse horário realmente cai dentro de uma janela de
+  // Disponibilidade do barbeiro pra esse dia da semana, e que não é no
+  // passado — reaproveita a mesma função usada por GET /api/horarios-livres
+  // pra garantir que "o que é oferecido" e "o que é aceito" nunca divirjam.
+  // Sem essa checagem, só o conflito com outros agendamentos era validado:
+  // uma requisição direta (fora do formulário normal) conseguia criar um
+  // PENDENTE numa folga do barbeiro, fora do expediente, ou numa data que
+  // já passou.
+  const { horarios: horariosLivres } = await calcularHorariosLivres({
+    barbeiroId,
+    data,
+    duracaoMinutos: servico.duracaoMinutos,
+  });
+  if (!horariosLivres.includes(hora)) {
+    return NextResponse.json({ erro: "Esse horário não está disponível" }, { status: 409 });
+  }
 
   // A checagem de horário livre e a criação do agendamento acontecem dentro
   // da MESMA transação serializável — isso fecha uma corrida que uma
@@ -101,7 +126,6 @@ export async function POST(req: NextRequest) {
   }
 
   if (barbeiro.whatsapp && barbeiro.callmebotApiKey) {
-    const cliente = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } });
     const dataFormatada = data.split("-").reverse().join("/");
     await notificarNovoAgendamento({
       whatsapp: barbeiro.whatsapp,

@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) {
     return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   }

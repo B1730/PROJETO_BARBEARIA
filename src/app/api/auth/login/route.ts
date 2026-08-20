@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { conferirSenha, criarSessao } from "@/lib/auth";
+import { conferirSenha, criarSessao, normalizarEmail } from "@/lib/auth";
 
 const schema = z.object({
   email: z.string().email(),
@@ -9,7 +9,7 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
   const dados = schema.safeParse(body);
   if (!dados.success) {
     return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   // mensagem genérica que existia antes — que evitava revelar quais
   // e-mails têm conta — por uma mais clara sobre o que exatamente deu
   // errado).
-  const usuario = await db.usuario.findUnique({ where: { email: dados.data.email } });
+  const usuario = await db.usuario.findUnique({ where: { email: normalizarEmail(dados.data.email) } });
   if (!usuario) {
     return NextResponse.json({ erro: "Usuário não existente" }, { status: 404 });
   }

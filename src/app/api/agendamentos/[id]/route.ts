@@ -31,13 +31,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const agendamento = await db.agendamento.findUnique({
     where: { id: params.id },
-    include: { cliente: { select: { nome: true } }, servico: { select: { nome: true } } },
+    include: {
+      cliente: { select: { nome: true } },
+      servico: { select: { nome: true } },
+      // whatsapp/callmebotApiKey do próprio barbeiro (== sessao.usuarioId,
+      // já confirmado logo abaixo) inclusos aqui pra não precisar de uma
+      // segunda consulta lá embaixo, na hora de notificar o cancelamento.
+      barbeiro: { select: { whatsapp: true, callmebotApiKey: true } },
+    },
   });
   if (!agendamento || agendamento.barbeiroId !== sessao.usuarioId) {
     return NextResponse.json({ erro: "Agendamento não encontrado" }, { status: 404 });
   }
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
   if ("recusarCancelamento" in dados.data) {
@@ -66,17 +73,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     where: { id: params.id },
     data: {
       status: dados.data.status,
-      // Se ainda tinha um pedido de cancelamento em aberto e o barbeiro
-      // cancelou por outro motivo, não faz sentido deixar isso pendurado.
-      ...(dados.data.status === "CANCELADO" ? { cancelamentoSolicitadoEm: null, motivoCancelamento: null } : {}),
+      // Qualquer decisão manual de status supera um pedido de cancelamento
+      // em aberto — sem isso, confirmar/recusar diretamente (em vez de usar
+      // recusarCancelamento) deixava os dois campos pendurados, e pra
+      // CANCELADO isso travava o cliente pra sempre (POST .../cancelar
+      // rejeita com 409 sempre que já existe um pedido em aberto).
+      cancelamentoSolicitadoEm: null,
+      motivoCancelamento: null,
     },
   });
 
   if (dados.data.status === "CANCELADO") {
-    const barbeiro = await db.usuario.findUnique({
-      where: { id: sessao.usuarioId },
-      select: { whatsapp: true, callmebotApiKey: true },
-    });
+    const barbeiro = agendamento.barbeiro;
     if (barbeiro?.whatsapp && barbeiro.callmebotApiKey) {
       const dataFormatada = agendamento.data.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
       const horaFormatada = agendamento.data.toLocaleTimeString("pt-BR", {

@@ -20,7 +20,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const agendamento = await db.agendamento.findUnique({
     where: { id: params.id },
-    include: { barbeiro: { select: { nome: true, whatsapp: true, callmebotApiKey: true } }, servico: { select: { nome: true } } },
+    include: {
+      barbeiro: { select: { nome: true, whatsapp: true, callmebotApiKey: true } },
+      servico: { select: { nome: true } },
+      cliente: { select: { nome: true } },
+    },
   });
   if (!agendamento || agendamento.clienteId !== sessao.usuarioId) {
     return NextResponse.json({ erro: "Agendamento não encontrado" }, { status: 404 });
@@ -38,14 +42,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Sem quebra de linha na mensagem que vai pro WhatsApp do barbeiro.
   const motivo = dados.data.motivo?.replace(/[\r\n]+/g, " ").trim() || null;
 
-  const atualizado = await db.agendamento.update({
-    where: { id: params.id },
+  // updateMany (não update) com a mesma condição já checada acima repetida
+  // no `where` — fecha a corrida de duas requisições simultâneas pra esse
+  // mesmo agendamento: sem isso, a checagem "sem pedido em aberto" lá em
+  // cima e essa escrita eram dois passos separados, e ambas podiam passar
+  // na checagem antes de qualquer uma escrever, mandando duas notificações
+  // de WhatsApp duplicadas pro barbeiro.
+  const resultado = await db.agendamento.updateMany({
+    where: { id: params.id, cancelamentoSolicitadoEm: null, status: { in: ["PENDENTE", "CONFIRMADO"] } },
     data: { cancelamentoSolicitadoEm: new Date(), motivoCancelamento: motivo },
   });
+  if (resultado.count === 0) {
+    return NextResponse.json({ erro: "Esse agendamento não pode mais ser cancelado" }, { status: 409 });
+  }
 
-  const { barbeiro, servico } = agendamento;
+  const { barbeiro, servico, cliente } = agendamento;
   if (barbeiro.whatsapp && barbeiro.callmebotApiKey) {
-    const cliente = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } });
     const dataFormatada = agendamento.data.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
     const horaFormatada = agendamento.data.toLocaleTimeString("pt-BR", {
       timeZone: "America/Sao_Paulo",
@@ -59,5 +71,5 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     });
   }
 
-  return NextResponse.json({ agendamento: atualizado });
+  return NextResponse.json({ ok: true });
 }

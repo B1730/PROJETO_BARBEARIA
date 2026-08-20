@@ -301,6 +301,19 @@ src/app/
   tende a melhorar com o tempo. Não tem correção de código pra isso hoje;
   se virar problema recorrente, a solução de verdade é migrar pra um
   serviço de e-mail transacional com domínio verificado.
+- **`DATABASE_URL` ainda aponta pra conexão direta do Supabase (porta
+  5432), não pro pooler** — o schema já está pronto pra trocar
+  (`directUrl` adicionado no `datasource db`, `DIRECT_URL` já configurada
+  no `.env`/`.env.example` com o mesmo valor da conexão direta), mas não
+  dá pra trocar sozinho porque a string do pooler (porta 6543,
+  `aws-0-<região>.pooler.supabase.com`) depende da região do projeto
+  Supabase, que só aparece no painel dele (Project Settings > Database >
+  Connection pooling) — não tem como descobrir isso pelo código. Quando o
+  usuário pegar essa string: trocar só `DATABASE_URL` (no `.env` local e
+  nas variáveis de ambiente da Vercel) pra ela, com `?pgbouncer=true` no
+  final, e deixar `DIRECT_URL` como está. Isso reduz o risco de esgotar o
+  limite de conexões do plano gratuito, que fica mais alto por causa do
+  polling de 8s do painel do barbeiro.
 
 Se o usuário pedir para avançar em algum desses pontos, pode implementar
 diretamente — são extensões esperadas do sistema, não mudanças de escopo.
@@ -590,11 +603,98 @@ sessão).
   cancelamento do agendamento alheio (404), recusar sem pedido em aberto
   dá 409, e o ciclo completo pedir → recusar → pedir de novo → confirmar
   funciona e limpa os campos corretamente em cada passo.
+- **Quarta auditoria completa (bugs + performance) + leva de correções**:
+  primeira auditoria com foco explícito em performance, não só bugs — 3
+  agentes em paralelo (rotas de API/libs, frontend, infra/schema/build)
+  encontraram 12 bugs e 14 melhorias de performance; o usuário pediu pra
+  implementar tudo. Bugs corrigidos: e-mail não era normalizado em
+  nenhuma rota de login/cadastro/convite (`normalizarEmail()` novo em
+  `src/lib/auth.ts`, aplicado em todo lugar que lê/grava e-mail —
+  "Fulano@x.com" e "fulano@x.com" viravam duas contas); faturamento da
+  equipe do chefe travava no período errado por causa de uma closure
+  velha no polling (`carregarEquipe` virou `useCallback` com
+  `equipePeriodo` na dependência); `POST /api/agendamentos` não conferia
+  a `Disponibilidade` real do barbeiro nem se o horário já tinha passado
+  (agora reaproveita `calcularHorariosLivres()` antes de tentar criar);
+  `PATCH /api/agendamentos/[id]` só limpava um pedido de cancelamento
+  pendente quando o novo status era CANCELADO — confirmar/recusar direto
+  deixava o cliente travado pra sempre tentando pedir cancelamento de
+  novo (agora limpa sempre que o status muda); guarda de open-redirect em
+  `/entrar` mais fraca que em `/cadastro` (mesmo regex agora nos dois);
+  mensagem "Pedido enviado!" reaparecia sem um novo pedido ter sido feito
+  ao trocar de horário em `[slug]/page.tsx`; `Usuario.barbearia` tinha
+  `onDelete: SetNull` diferente de `Servico`/`Agendamento` (`Restrict`) —
+  agora as três relações são consistentes; `PATCH /api/perfil` zerava
+  `whatsapp`/`callmebotApiKey` se a chamada omitisse esses campos (mesma
+  guarda `!== undefined` que `fotoUrl` já tinha); `GET /api/horarios-livres`
+  não validava o formato de `data` (rota pública, virava 500 cru);
+  corrida (TOCTOU) pequena no pedido de cancelamento virou um `updateMany`
+  atômico; e a maioria das rotas POST/PATCH passou a tratar erro de
+  `await req.json()` com `.catch(() => null)` em vez de deixar estourar
+  500 num corpo malformado. Não implementado (decisão consciente, custo/
+  risco maior que o benefício pra esse tamanho de app): CHECK constraints
+  de banco pra preço/duração (já totalmente coberto por zod +
+  `calcularHorariosLivres()`).
+
+  Performance: `Agendamento` ganhou `@@index([clienteId])` (usado por
+  `GET /api/agendamentos` na tela `/meus-agendamentos`, sem índice antes);
+  `Disponibilidade` perdeu o índice solto em `barbeiroId` (redundante
+  desde a trava contra duplicata, que já cobre isso via prefixo);
+  `datasource db` ganhou `directUrl`/`DIRECT_URL` (preparação pro pooler
+  do Supabase — ver "Pendências conhecidas", falta só a string real, que
+  só existe no painel do Supabase); o polling de 8s do painel do barbeiro
+  (`barbeiro/page.tsx`) parou de repetir `disponibilidade`/`servicos`/
+  `financeiro` a cada tick (só mudam por ação própria do barbeiro, que já
+  recarrega na hora) — `carregarTudo` virou `carregarAgendamentos`
+  (no polling) + `carregarDadosEstaveis` (só no carregamento inicial e
+  após mutação própria); o mesmo padrão foi aplicado em `admin/page.tsx`
+  (`carregarFinanceiro` separado de `carregarBarbeirosEServicos`, trocar
+  o período de faturamento não apaga mais o painel inteiro); várias rotas
+  ganharam `Promise.all` em buscas que não dependiam uma da outra
+  (`GET /api/horarios-livres`, `POST /api/agendamentos`,
+  `GET /api/auth/sessao`) e perderam consultas duplicadas de dado que já
+  tinha sido buscado na mesma requisição; `buscarAgendamentosOcupados()`
+  trocou `include` por `select` mínimo (roda dentro da transação
+  `Serializable` de criar agendamento, então importa reduzir o que ela
+  traz); `src/app/[slug]/page.tsx` (página pública mais visitada) virou
+  um Server Component que busca a barbearia no servidor — sem isso, toda
+  visita mostrava "Carregando..." antes do conteúdo aparecer; a parte
+  interativa (escolher corte/barbeiro/horário) foi pro novo
+  `PaginaBarbeariaCliente.tsx`, e a query em si foi pra um helper
+  compartilhado (`src/lib/barbearia.ts`, `buscarBarbeariaPublica()`) que
+  tanto o Server Component quanto `GET /api/barbearias/[slug]` usam agora,
+  pra nunca divergir; fotos de corte/barbeiro trocaram de `<img>` por
+  `next/image` nos 4 lugares que mostravam (precisou de
+  `images.remotePatterns` em `next.config.js` liberando o host do
+  Supabase Storage). Tentado e revertido: tirar `incremental` de
+  `tsconfig.json` pra parar de escrever `tsconfig.tsbuildinfo` dentro da
+  pasta do OneDrive — o próprio `next build` detecta e reescreve isso de
+  volta pra `true` automaticamente a cada build, então não tem como fazer
+  esse cache parar de existir sem brigar com a própria ferramenta; o
+  arquivo solto que já existia foi apagado como limpeza única, mas isso
+  não é uma correção que "gruda". Não implementado (impacto marginal
+  demais pelo risco/tamanho do fetch duplicado): dedupe do
+  `GET /api/auth/sessao` entre `barbeiro/page.tsx` e `Cabecalho.tsx`.
+  Testado de ponta a ponta via script com sessão forjada: validação de
+  disponibilidade rejeita horário fora de expediente (409) e aceita
+  horário livre de verdade; confirmar diretamente sem usar
+  `recusarCancelamento` limpa o pedido de cancelamento pendente (bug
+  corrigido) e o cliente consegue pedir cancelamento de novo depois;
+  `PATCH /api/perfil` não zera campo omitido; `data` inválida em
+  `horarios-livres` dá 400. Migração `indices_e_ondelete` aplicada nas
+  duas cópias.
 
 ## Ambiente / variáveis necessárias
 
 Arquivo `.env` (baseado em `.env.example`):
-- `DATABASE_URL` — string de conexão do Postgres (Supabase)
+- `DATABASE_URL` — string de conexão do Postgres (Supabase). Hoje é a
+  conexão direta (porta 5432) — trocar pro pooler é uma melhoria de
+  performance pendente, ver "Pendências conhecidas".
+- `DIRECT_URL` — sempre a conexão direta (porta 5432), mesmo que
+  `DATABASE_URL` um dia aponte pro pooler. `prisma/schema.prisma` usa
+  essa variável (`directUrl` no `datasource db`) porque `prisma migrate`/
+  `db push` precisam de uma conexão direta pra rodar DDL — não funciona
+  bem via pgbouncer em modo transação.
 - `JWT_SECRET` — string aleatória para assinar os cookies de sessão.
   `src/lib/auth.ts` dá `throw` no carregamento do módulo se isso não
   estiver definida — de propósito, não existe (nem deve voltar a existir)

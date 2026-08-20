@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
     if (!(await sessaoTemPrivilegioDeChefe(sessao))) {
       return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
     }
-    const alvo = await db.usuario.findUnique({ where: { id: alvoId } });
+    const alvo = await db.usuario.findUnique({ where: { id: alvoId }, select: { papel: true, barbeariaId: true } });
     if (!alvo || alvo.papel !== "BARBEIRO" || alvo.barbeariaId !== sessao.barbeariaId) {
       return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
     }
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   const sessao = await exigirSessao(["BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
   try {

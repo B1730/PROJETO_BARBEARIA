@@ -10,19 +10,19 @@ export async function GET() {
   const sessao = await exigirSessao();
   if (sessao instanceof NextResponse) return sessao;
 
-  const usuario = await db.usuario.findUnique({
-    where: { id: sessao.usuarioId },
-    select: { id: true, nome: true, papel: true, ehChefe: true },
-  });
+  // As duas buscas são independentes (nenhuma usa o resultado da outra —
+  // barbearia já sai direto de sessao.barbeariaId, vindo do JWT), então
+  // rodam em paralelo em vez de uma esperar a outra.
+  const [usuario, barbearia] = await Promise.all([
+    db.usuario.findUnique({
+      where: { id: sessao.usuarioId },
+      select: { id: true, nome: true, papel: true, ehChefe: true },
+    }),
+    sessao.barbeariaId
+      ? db.barbearia.findUnique({ where: { id: sessao.barbeariaId }, select: { id: true, nome: true } })
+      : Promise.resolve(null),
+  ]);
   if (!usuario) return NextResponse.json({ erro: "Não autenticado" }, { status: 401 });
-
-  let barbearia = null;
-  if (sessao.barbeariaId) {
-    barbearia = await db.barbearia.findUnique({
-      where: { id: sessao.barbeariaId },
-      select: { id: true, nome: true },
-    });
-  }
 
   return NextResponse.json({ usuario, barbearia });
 }

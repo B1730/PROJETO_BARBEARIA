@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Cabecalho from "@/components/Cabecalho";
 
 const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -103,24 +104,29 @@ export default function PainelBarbeiro() {
     });
   }, []);
 
-  async function carregarTudo(mostrarSpinner = true) {
+  // Só os agendamentos (pedidos pendentes, agenda de hoje, confirmados) —
+  // o que realmente muda a cada instante e por isso vale a pena pollar a
+  // cada 8s (ver useEffect do intervalo mais abaixo). Disponibilidade,
+  // serviços e faturamento ficaram em carregarDadosEstaveis(), que só
+  // roda uma vez no carregamento inicial e depois de uma ação do próprio
+  // barbeiro que muda cada um deles — repetir essas três buscas a cada 8s
+  // era refazer trabalho que quase nunca muda (faturamento, em particular,
+  // só muda quando um agendamento vira CONCLUIDO, o que hoje não acontece
+  // em lugar nenhum do app).
+  async function carregarAgendamentos(mostrarSpinner = true) {
     if (mostrarSpinner) setCarregando(true);
-    const [pendResp, hojeResp, confResp, dispResp, finResp, finHojeResp, servResp] = await Promise.all([
+    const [pendResp, hojeResp, confResp] = await Promise.all([
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}`),
       fetch("/api/agendamentos?status=CONFIRMADO"),
-      fetch("/api/disponibilidade"),
-      fetch("/api/financeiro?periodo=mes"),
-      fetch("/api/financeiro?periodo=dia"),
-      fetch("/api/servicos"),
     ]);
 
-    const semAcesso = [pendResp, hojeResp, confResp, dispResp, finResp, finHojeResp, servResp].some((r) => r.status === 401 || r.status === 403);
+    const semAcesso = [pendResp, hojeResp, confResp].some((r) => r.status === 401 || r.status === 403);
     if (semAcesso) {
       router.push("/entrar");
       return;
     }
-    if (!pendResp.ok || !hojeResp.ok || !confResp.ok || !dispResp.ok || !finResp.ok || !finHojeResp.ok || !servResp.ok) {
+    if (!pendResp.ok || !hojeResp.ok || !confResp.ok) {
       if (mostrarSpinner) {
         setErro("Não foi possível carregar os dados do painel.");
         setCarregando(false);
@@ -128,16 +134,10 @@ export default function PainelBarbeiro() {
       return;
     }
 
-    const [pend, hoje, conf, disp, fin, finHoje, serv] = await Promise.all([
-      pendResp.json(), hojeResp.json(), confResp.json(), dispResp.json(), finResp.json(), finHojeResp.json(), servResp.json(),
-    ]);
+    const [pend, hoje, conf] = await Promise.all([pendResp.json(), hojeResp.json(), confResp.json()]);
     const pendentesLista: Agendamento[] = pend.agendamentos || [];
     setPendentes(pendentesLista);
     setAgendaHoje(hoje.agendamentos || []);
-    setDisponibilidades(disp.disponibilidades || []);
-    setFinanceiro(fin);
-    setCortesHoje(finHoje.totalDeAtendimentos ?? null);
-    setServicos(serv.servicos || []);
 
     // Próximos agendamentos (dias depois de hoje) — pra saber o que vem
     // por aí sem precisar ficar trocando de dia. "Agendamentos de hoje"
@@ -162,9 +162,34 @@ export default function PainelBarbeiro() {
     if (mostrarSpinner) setCarregando(false);
   }
 
-  useEffect(() => { carregarTudo(true); }, []);
+  // Disponibilidade/serviços/faturamento — só mudam por uma ação do próprio
+  // barbeiro nesta tela, que já chama isso de novo depois de salvar. Fora
+  // do polling de 8s de propósito (ver comentário acima).
+  async function carregarDadosEstaveis() {
+    const [dispResp, finResp, finHojeResp, servResp] = await Promise.all([
+      fetch("/api/disponibilidade"),
+      fetch("/api/financeiro?periodo=mes"),
+      fetch("/api/financeiro?periodo=dia"),
+      fetch("/api/servicos"),
+    ]);
+    if (!dispResp.ok || !finResp.ok || !finHojeResp.ok || !servResp.ok) return;
+    const [disp, fin, finHoje, serv] = await Promise.all([
+      dispResp.json(), finResp.json(), finHojeResp.json(), servResp.json(),
+    ]);
+    setDisponibilidades(disp.disponibilidades || []);
+    setFinanceiro(fin);
+    setCortesHoje(finHoje.totalDeAtendimentos ?? null);
+    setServicos(serv.servicos || []);
+  }
 
-  async function carregarEquipe() {
+  useEffect(() => { carregarAgendamentos(true); carregarDadosEstaveis(); }, []);
+
+  // useCallback com equipePeriodo na dependência — sem isso, a referência
+  // dessa função usada dentro do setInterval de polling (mais abaixo)
+  // ficava congelada no equipePeriodo de quando o efeito rodou a primeira
+  // vez (sempre "mes"), e cada poll voltava o faturamento da equipe pro
+  // período errado mesmo depois do chefe trocar o filtro.
+  const carregarEquipe = useCallback(async () => {
     const [bResp, aResp, fResp] = await Promise.all([
       fetch("/api/barbeiros"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}&equipe=1`),
@@ -175,9 +200,9 @@ export default function PainelBarbeiro() {
     setEquipeBarbeiros(b.barbeiros || []);
     setEquipeAgendaHoje(a.agendamentos || []);
     setEquipeFinanceiro(f);
-  }
+  }, [equipePeriodo]);
 
-  useEffect(() => { if (ehChefe) carregarEquipe(); }, [ehChefe, equipePeriodo]);
+  useEffect(() => { if (ehChefe) carregarEquipe(); }, [ehChefe, equipePeriodo, carregarEquipe]);
 
   // Agenda de um barbeiro contratado específico — só os agendamentos que
   // ainda não aconteceram (pendente/confirmado), pra saber o que ele tem
@@ -234,11 +259,11 @@ export default function PainelBarbeiro() {
     // "Minha equipe" só mudava quando o chefe trocava o filtro de período ou
     // recarregava a página manualmente.
     const intervalo = setInterval(() => {
-      carregarTudo(false);
+      carregarAgendamentos(false);
       if (ehChefe) carregarEquipe();
     }, INTERVALO_POLLING_MS);
     return () => clearInterval(intervalo);
-  }, [ehChefe]);
+  }, [ehChefe, carregarEquipe]);
 
   async function responder(id: string, status: "CONFIRMADO" | "RECUSADO") {
     setErro("");
@@ -254,7 +279,7 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível responder esse pedido");
       return;
     }
-    carregarTudo(false);
+    carregarAgendamentos(false);
   }
 
   // Decisão do barbeiro sobre um pedido de cancelamento do cliente: ou
@@ -275,7 +300,7 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível processar esse pedido de cancelamento");
       return;
     }
-    carregarTudo(false);
+    carregarAgendamentos(false);
   }
 
   async function adicionarDisponibilidade(e: React.FormEvent) {
@@ -293,7 +318,7 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível adicionar essa disponibilidade");
       return;
     }
-    carregarTudo(false);
+    carregarDadosEstaveis();
   }
 
   async function removerDisponibilidade(id: string) {
@@ -304,7 +329,7 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível remover essa disponibilidade");
       return;
     }
-    carregarTudo(false);
+    carregarDadosEstaveis();
   }
 
   async function adicionarServico(e: React.FormEvent) {
@@ -342,7 +367,7 @@ export default function PainelBarbeiro() {
     }
     setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30"); setNovoServicoImagem(null);
     setSucesso("Corte cadastrado — só aparece pra você agendar.");
-    carregarTudo(false);
+    carregarDadosEstaveis();
   }
 
   if (carregando) {
@@ -509,8 +534,7 @@ export default function PainelBarbeiro() {
               <div key={s.id} className="card flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   {s.imagemUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={s.imagemUrl} alt={s.nome} className="h-10 w-10 rounded-md object-cover" />
+                    <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
                   )}
                   <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
                 </div>

@@ -38,14 +38,18 @@ export default function MeusAgendamentos() {
   const [enviando, setEnviando] = useState(false);
 
   async function carregar() {
-    const sResp = await fetch("/api/auth/sessao");
+    // As duas requisições não dependem uma da outra — GET /api/agendamentos
+    // já se limita aos dados do usuário logado, seja ele qual for; só não
+    // usamos o resultado se não for CLIENTE. Rodar em paralelo evita esperar
+    // a sessão responder antes de nem começar a buscar os agendamentos.
+    const [sResp, aResp] = await Promise.all([
+      fetch("/api/auth/sessao"),
+      fetch("/api/agendamentos"),
+    ]);
     if (!sResp.ok) { setSessao(null); setCarregando(false); return; }
     const s = await sResp.json();
     setSessao(s.usuario);
-    if (s.usuario.papel !== "CLIENTE") { setCarregando(false); return; }
-
-    const aResp = await fetch("/api/agendamentos");
-    if (aResp.ok) {
+    if (s.usuario.papel === "CLIENTE" && aResp.ok) {
       const a = await aResp.json();
       const lista: Agendamento[] = (a.agendamentos || []).sort((x: Agendamento, y: Agendamento) => x.data.localeCompare(y.data));
       setAgendamentos(lista);

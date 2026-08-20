@@ -39,7 +39,7 @@ const schema = z.object({
 // se cadastrado com esse e-mail por outro caminho enquanto o convite
 // estava pendente).
 export async function POST(req: NextRequest) {
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
   const identidade = await lerTokenConviteBarbeiro(dados.data.token);

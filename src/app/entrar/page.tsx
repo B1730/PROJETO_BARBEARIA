@@ -39,7 +39,10 @@ function FormularioEntrar() {
     }
     if (dados.usuario.papel === "DONO") router.push("/admin");
     else if (dados.usuario.papel === "BARBEIRO") router.push("/barbeiro");
-    else router.push(next && next.startsWith("/") ? next : "/");
+    // Mesma checagem usada em cadastro/page.tsx — startsWith("/") sozinho
+    // não barra "//evil.com" ou "/\evil.com", que o navegador resolve como
+    // link absoluto fora do site.
+    else router.push(next && /^\/(?!\/|\\)/.test(next) ? next : "/");
   }
 
   return (

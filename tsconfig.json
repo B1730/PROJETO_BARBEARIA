@@ -12,6 +12,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
+    // O próprio `next build` reescreve isso de volta pra `true` se remover
+    // (ver CLAUDE.md) — não vale a pena lutar contra a ferramenta por causa
+    // de um cache de type-check que nem afeta o build de verdade.
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": { "@/*": ["./src/*"] }

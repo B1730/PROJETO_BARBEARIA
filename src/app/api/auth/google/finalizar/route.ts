@@ -17,7 +17,7 @@ const schema = z.object({
 // gerado em /api/auth/google/callback (prova que o e-mail já foi confirmado
 // pelo Google) mais o nome da barbearia, e só então cria a conta.
 export async function POST(req: NextRequest) {
-  const dados = schema.safeParse(await req.json());
+  const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
 
   const identidade = await lerTokenGooglePendente(dados.data.token);
