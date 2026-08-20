@@ -8,7 +8,14 @@ import { notificarNovoAgendamento } from "@/lib/whatsapp";
 
 const schema = z.object({
   barbeiroId: z.string(),
-  servicoId: z.string(),
+  // Um agendamento pode ter mais de um corte (ex.: cabelo + barba) — ver
+  // AgendamentoServico no schema. Limite de 10 é só uma guarda contra
+  // payload abusivo, não uma regra de negócio real.
+  servicoIds: z
+    .array(z.string())
+    .min(1, "Escolha pelo menos um corte")
+    .max(10)
+    .refine((ids) => new Set(ids).size === ids.length, "Corte repetido na lista"),
   data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // "2026-08-20"
   hora: z.string().regex(/^\d{2}:\d{2}$/), // "14:30"
 });
@@ -17,80 +24,90 @@ const schema = z.object({
 // tomado por outra requisição — nunca chega a sair da função POST.
 class HorarioIndisponivelError extends Error {}
 
-// POST: cliente solicita um agendamento. Fica como PENDENTE até o
-// barbeiro aceitar ou recusar — ninguém mais consegue pegar o mesmo
-// horário enquanto ele está pendente (ver calcularHorariosLivres).
+// POST: cliente solicita um agendamento (um ou mais cortes de uma vez).
+// Fica como PENDENTE até o barbeiro aceitar ou recusar — ninguém mais
+// consegue pegar o mesmo horário enquanto ele está pendente (ver
+// calcularHorariosLivres).
 export async function POST(req: NextRequest) {
   const sessao = await exigirSessao(["CLIENTE"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
-  const { barbeiroId, servicoId, data, hora } = dados.data;
+  const { barbeiroId, servicoIds, data, hora } = dados.data;
 
-  // servico, barbeiro e cliente não dependem um do outro — buscar os três em
-  // paralelo. `barbeiros` sem filtro (todos os preços customizados desse
-  // serviço, não só o desse barbeiro) deixa derivar as duas perguntas que
-  // antes eram duas queries separadas ("algum barbeiro tem preço
-  // customizado pra esse corte" e "esse barbeiro específico tem") sem
-  // precisar de uma terceira consulta.
-  const [servico, barbeiro, cliente] = await Promise.all([
-    db.servico.findUnique({ where: { id: servicoId }, include: { barbeiros: true } }),
+  // servicos, barbeiro e cliente não dependem um do outro — buscar os três
+  // em paralelo. `barbeiros` sem filtro (todos os preços customizados de
+  // cada serviço, não só o desse barbeiro) deixa derivar, pra cada corte,
+  // se esse barbeiro específico tem preço próprio ou usa o preço base, sem
+  // precisar de uma query por corte.
+  const [servicos, barbeiro, cliente] = await Promise.all([
+    db.servico.findMany({ where: { id: { in: servicoIds } }, include: { barbeiros: true } }),
     db.usuario.findUnique({
       where: { id: barbeiroId },
       select: { id: true, nome: true, papel: true, barbeariaId: true, whatsapp: true, callmebotApiKey: true, atendeComoBarbeiro: true },
     }),
     db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } }),
   ]);
-  // barbeariaId nunca vem do cliente — é sempre derivado do serviço, pra
-  // não deixar misturar servicoId de uma barbearia com barbeiroId de outra.
-  if (!servico || !servico.ativo) {
+
+  if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo)) {
+    return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
+  }
+  // barbeariaId nunca vem do cliente — é sempre derivado dos serviços, pra
+  // não deixar misturar servicoId de uma barbearia com barbeiroId de
+  // outra. Todos os cortes escolhidos precisam ser da mesma barbearia
+  // (não dá pra combinar corte de uma barbearia com outra).
+  const barbeariaId = servicos[0].barbeariaId;
+  if (servicos.some((s) => s.barbeariaId !== barbeariaId)) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
   // "barbeiro" pode ser um BARBEIRO de verdade, ou o DONO que ativou
   // "também corto cabelo" (ver regra de negócio 10).
   const ehBarbeiroValido = barbeiro?.papel === "BARBEIRO" || (barbeiro?.papel === "DONO" && barbeiro.atendeComoBarbeiro);
-  if (!barbeiro || !ehBarbeiroValido || barbeiro.barbeariaId !== servico.barbeariaId) {
+  if (!barbeiro || !ehBarbeiroValido || barbeiro.barbeariaId !== barbeariaId) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }
 
-  // Se o serviço tem preços customizados por barbeiro, esse barbeiro precisa
-  // estar entre eles — senão ele nem oferece esse corte.
-  const precoDesseBarbeiro = servico.barbeiros.find((b) => b.barbeiroId === barbeiroId);
-  if (servico.barbeiros.length > 0 && !precoDesseBarbeiro) {
-    return NextResponse.json({ erro: "Esse barbeiro não realiza esse serviço" }, { status: 400 });
+  // Pra cada corte escolhido: se ele tem preços customizados por barbeiro,
+  // esse barbeiro precisa estar entre eles — senão ele nem oferece esse
+  // corte (mesma regra de sempre, agora conferida em cada um dos cortes
+  // escolhidos, não só num).
+  const itens: { servicoId: string; nome: string; preco: Prisma.Decimal; duracaoMinutos: number }[] = [];
+  for (const s of servicos) {
+    const precoDesseBarbeiro = s.barbeiros.find((b) => b.barbeiroId === barbeiroId);
+    if (s.barbeiros.length > 0 && !precoDesseBarbeiro) {
+      return NextResponse.json({ erro: `Esse barbeiro não realiza o corte "${s.nome}"` }, { status: 400 });
+    }
+    itens.push({ servicoId: s.id, nome: s.nome, preco: precoDesseBarbeiro?.preco ?? s.precoBase, duracaoMinutos: s.duracaoMinutos });
   }
 
-  const precoCobrado = precoDesseBarbeiro?.preco ?? servico.precoBase;
+  const precoCobrado = itens.reduce((soma, i) => soma + Number(i.preco), 0);
+  const duracaoMinutos = itens.reduce((soma, i) => soma + i.duracaoMinutos, 0);
   const inicio = new Date(`${data}T${hora}:00-03:00`);
-  const fim = new Date(inicio.getTime() + servico.duracaoMinutos * 60000);
+  const fim = new Date(inicio.getTime() + duracaoMinutos * 60000);
 
-  // Confere se esse horário realmente cai dentro de uma janela de
-  // Disponibilidade do barbeiro pra esse dia da semana, e que não é no
-  // passado — reaproveita a mesma função usada por GET /api/horarios-livres
-  // pra garantir que "o que é oferecido" e "o que é aceito" nunca divirjam.
-  // Sem essa checagem, só o conflito com outros agendamentos era validado:
-  // uma requisição direta (fora do formulário normal) conseguia criar um
-  // PENDENTE numa folga do barbeiro, fora do expediente, ou numa data que
-  // já passou.
-  const { horarios: horariosLivres } = await calcularHorariosLivres({
-    barbeiroId,
-    data,
-    duracaoMinutos: servico.duracaoMinutos,
-  });
+  // Confere se esse horário (já somando a duração de todos os cortes
+  // escolhidos) realmente cai dentro de uma janela de Disponibilidade do
+  // barbeiro pra esse dia da semana, e que não é no passado — reaproveita
+  // a mesma função usada por GET /api/horarios-livres pra garantir que "o
+  // que é oferecido" e "o que é aceito" nunca divirjam. Sem essa checagem,
+  // só o conflito com outros agendamentos era validado: uma requisição
+  // direta (fora do formulário normal) conseguia criar um PENDENTE numa
+  // folga do barbeiro, fora do expediente, ou numa data que já passou.
+  const { horarios: horariosLivres } = await calcularHorariosLivres({ barbeiroId, data, duracaoMinutos });
   if (!horariosLivres.includes(hora)) {
     return NextResponse.json({ erro: "Esse horário não está disponível" }, { status: 409 });
   }
 
-  // A checagem de horário livre e a criação do agendamento acontecem dentro
-  // da MESMA transação serializável — isso fecha uma corrida que uma
-  // checagem-depois-cria em dois passos separados não fecha: dois clientes
-  // pedindo, ao mesmo tempo, dois serviços de duração diferente pro mesmo
-  // barbeiro em horários que se sobrepõem (ex.: serviço de 90min às 10:00 e
-  // serviço de 30min às 10:30) têm início "diferente" — a constraint
-  // unique(barbeiroId, data) sozinha não pega esse caso, só o mesmo instante
-  // exato. Sob isolamento serializável, o Postgres detecta a sobreposição e
-  // uma das duas transações falha com erro de serialização (P2034).
+  // A checagem de horário livre e a criação do agendamento (+ os cortes
+  // escolhidos) acontecem dentro da MESMA transação serializável — isso
+  // fecha uma corrida que uma checagem-depois-cria em dois passos
+  // separados não fecha: dois clientes pedindo, ao mesmo tempo, cortes de
+  // duração diferente pro mesmo barbeiro em horários que se sobrepõem têm
+  // início "diferente" — a constraint unique(barbeiroId, data) sozinha não
+  // pega esse caso, só o mesmo instante exato. Sob isolamento
+  // serializável, o Postgres detecta a sobreposição e uma das duas
+  // transações falha com erro de serialização (P2034).
   let agendamento;
   try {
     agendamento = await db.$transaction(
@@ -99,18 +116,27 @@ export async function POST(req: NextRequest) {
         if (conflitaComOcupados(inicio, fim, ocupados)) {
           throw new HorarioIndisponivelError();
         }
-        return tx.agendamento.create({
+        const criado = await tx.agendamento.create({
           data: {
-            barbeariaId: servico.barbeariaId,
+            barbeariaId,
             clienteId: sessao.usuarioId,
             barbeiroId,
-            servicoId,
             data: inicio,
-            duracaoMinutos: servico.duracaoMinutos,
+            duracaoMinutos,
             precoCobrado,
             status: "PENDENTE",
           },
         });
+        await tx.agendamentoServico.createMany({
+          data: itens.map((i) => ({
+            agendamentoId: criado.id,
+            servicoId: i.servicoId,
+            nomeServico: i.nome,
+            precoServico: i.preco,
+            duracaoMinutos: i.duracaoMinutos,
+          })),
+        });
+        return criado;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
@@ -128,17 +154,18 @@ export async function POST(req: NextRequest) {
     throw erro;
   }
 
+  const nomesCortes = itens.map((i) => i.nome).join(" + ");
   if (barbeiro.whatsapp && barbeiro.callmebotApiKey) {
     const dataFormatada = data.split("-").reverse().join("/");
     await notificarNovoAgendamento({
       whatsapp: barbeiro.whatsapp,
       apikey: barbeiro.callmebotApiKey,
-      mensagem: `Novo agendamento: ${cliente?.nome ?? "um cliente"} marcou ${servico.nome} para ${dataFormatada} às ${hora}. Entre no painel pra confirmar.`,
+      mensagem: `Novo agendamento: ${cliente?.nome ?? "um cliente"} marcou ${nomesCortes} (R$ ${precoCobrado.toFixed(2)}) para ${dataFormatada} às ${hora}. Entre no painel pra confirmar.`,
     });
   }
 
   return NextResponse.json({
-    agendamento,
+    agendamento: { ...agendamento, servicos: itens.map((i) => ({ nomeServico: i.nome, precoServico: i.preco })) },
     // Usado pela tela do cliente pra oferecer um link direto de WhatsApp
     // com o barbeiro escolhido, além da notificação automática que já foi
     // disparada acima.
@@ -204,12 +231,16 @@ export async function GET(req: NextRequest) {
     };
   }
 
+  // cliente inclui email/whatsapp pra quem já tem acesso a esse
+  // agendamento (barbeiro/dono da barbearia dele) poder entrar em contato
+  // se precisar — CLIENTE só vê os próprios agendamentos de qualquer
+  // forma (where.clienteId acima), então nunca vaza dado de outro cliente.
   const agendamentos = await db.agendamento.findMany({
     where,
     include: {
-      cliente: { select: { id: true, nome: true } },
+      cliente: { select: { id: true, nome: true, email: true, whatsapp: true } },
       barbeiro: { select: { id: true, nome: true } },
-      servico: true,
+      servicos: { select: { nomeServico: true, precoServico: true, duracaoMinutos: true } },
     },
     orderBy: { data: "asc" },
   });

@@ -17,6 +17,10 @@ const schema = z.object({
   senha: z.string().min(6),
   papel: z.enum(["CLIENTE", "DONO"]),
   nomeBarbearia: z.string().optional(), // obrigatório para DONO
+  // Opcional (cadastro via Google não pede isso) — só usado por CLIENTE,
+  // pra o barbeiro poder entrar em contato se precisar (ver
+  // GET /api/agendamentos).
+  whatsapp: z.string().min(8).optional().or(z.literal("")),
 });
 
 export async function POST(req: NextRequest) {
@@ -27,6 +31,7 @@ export async function POST(req: NextRequest) {
   }
   const { nome, senha, papel, nomeBarbearia } = dados.data;
   const email = normalizarEmail(dados.data.email);
+  const whatsapp = dados.data.whatsapp ? dados.data.whatsapp.replace(/\D/g, "") : null;
 
   if (papel === "DONO" && !nomeBarbearia) {
     return NextResponse.json({ erro: "Informe o nome da barbearia" }, { status: 400 });
@@ -48,7 +53,7 @@ export async function POST(req: NextRequest) {
         barbeariaId = barbearia.id;
       }
       return tx.usuario.create({
-        data: { nome, email, senhaHash, papel, barbeariaId },
+        data: { nome, email, senhaHash, papel, barbeariaId, whatsapp },
       });
     });
 

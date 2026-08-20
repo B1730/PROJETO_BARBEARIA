@@ -27,6 +27,7 @@ function FormularioCadastro() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [nomeBarbearia, setNomeBarbearia] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
 
@@ -37,7 +38,11 @@ function FormularioCadastro() {
     const resp = await fetch("/api/auth/cadastro", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome, email, senha, papel, nomeBarbearia: papel === "DONO" ? nomeBarbearia : undefined }),
+      body: JSON.stringify({
+        nome, email, senha, papel,
+        nomeBarbearia: papel === "DONO" ? nomeBarbearia : undefined,
+        whatsapp: papel === "CLIENTE" ? whatsapp : undefined,
+      }),
     });
     const dados = await resp.json();
     setCarregando(false);
@@ -74,6 +79,14 @@ function FormularioCadastro() {
         <input className="input" placeholder="Seu nome" value={nome} onChange={(e) => setNome(e.target.value)} required />
         <input className="input" type="email" placeholder="Seu e-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <input className="input" type="password" placeholder="Crie uma senha" value={senha} onChange={(e) => setSenha(e.target.value)} required minLength={6} />
+        {papel === "CLIENTE" && (
+          <input
+            className="input"
+            placeholder="Seu WhatsApp (opcional, com DDD e país)"
+            value={whatsapp}
+            onChange={(e) => setWhatsapp(e.target.value)}
+          />
+        )}
         {erro && <p className="text-sm text-red-600">{erro}</p>}
         <button className="btn-primary w-full" disabled={carregando}>
           {carregando ? "Criando..." : papel === "DONO" ? "Criar barbearia" : "Criar conta"}

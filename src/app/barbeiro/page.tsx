@@ -38,7 +38,9 @@ function formatarHora(dataIso: string) {
 
 type Agendamento = {
   id: string; status: string; data: string;
-  cliente: { nome: string }; servico: { nome: string }; precoCobrado: string;
+  cliente: { nome: string; email: string; whatsapp: string | null };
+  servicos: { nomeServico: string }[];
+  precoCobrado: string;
   barbeiro?: { id: string; nome: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
 };
@@ -47,6 +49,40 @@ type Servico = {
   id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
   barbeiros: { barbeiroId: string; preco: string }[];
 };
+
+function nomesCortes(ag: Agendamento) {
+  return ag.servicos.map((s) => s.nomeServico).join(" + ");
+}
+
+// Clicar num agendamento mostra os dados de contato do cliente (nome,
+// e-mail, WhatsApp) — fica escondido por padrão pra não poluir os
+// cartões, cada um abre/fecha por conta própria.
+function DetalheCliente({ ag, aberto, onToggle }: { ag: Agendamento; aberto: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <button onClick={onToggle} className="text-xs underline text-ink/50 mt-1">
+        {aberto ? "Ocultar contato" : "Ver contato"}
+      </button>
+      {aberto && (
+        <div className="mt-1 p-2 bg-line/30 rounded text-xs space-y-0.5">
+          <p>{ag.cliente.email}</p>
+          {ag.cliente.whatsapp ? (
+            <a
+              className="underline"
+              href={`https://wa.me/${ag.cliente.whatsapp.replace(/\D/g, "")}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Falar no WhatsApp ({ag.cliente.whatsapp})
+            </a>
+          ) : (
+            <p className="text-ink/40">Cliente não cadastrou WhatsApp</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
 type BarbeiroEquipe = { id: string; nome: string; email: string; ehChefe: boolean };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
 
@@ -72,6 +108,15 @@ export default function PainelBarbeiro() {
   const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
+  const [detalhesExpandidos, setDetalhesExpandidos] = useState<Set<string>>(new Set());
+  function alternarDetalhe(id: string) {
+    setDetalhesExpandidos((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id);
+      else novo.add(id);
+      return novo;
+    });
+  }
   const [meuId, setMeuId] = useState<string | null>(null);
   const [ehChefe, setEhChefe] = useState(false);
   const [cortesHoje, setCortesHoje] = useState<number | null>(null);
@@ -371,6 +416,17 @@ export default function PainelBarbeiro() {
     carregarDadosEstaveis();
   }
 
+  async function removerServico(id: string) {
+    setErro("");
+    const resp = await fetch(`/api/servicos/${id}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível excluir esse corte");
+      return;
+    }
+    carregarDadosEstaveis();
+  }
+
   if (carregando) {
     return (
       <>
@@ -406,12 +462,13 @@ export default function PainelBarbeiro() {
           {agendaHoje.map((ag) => (
             <div key={ag.id} className="card flex justify-between items-center">
               <div>
-                <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                 <p className="text-sm text-ink/60">
                   {new Date(ag.data).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
                   {" · "}
                   <span className={COR_STATUS[ag.status] || ""}>{ROTULO_STATUS[ag.status] || ag.status}</span>
                 </p>
+                <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
               </div>
               {ag.status === "PENDENTE" && (
                 <div className="flex gap-2">
@@ -438,8 +495,9 @@ export default function PainelBarbeiro() {
               <div key={ag.id} className="card shrink-0 w-48">
                 <p className="text-xs text-ink/50 mb-1">{formatarDataCurta(ag.data)} · {formatarHora(ag.data)}</p>
                 <p className="font-medium text-sm">{ag.cliente.nome}</p>
-                <p className="text-sm text-ink/60">{ag.servico.nome}</p>
+                <p className="text-sm text-ink/60">{nomesCortes(ag)}</p>
                 <p className={`text-xs mt-1 ${COR_STATUS[ag.status] || ""}`}>{ROTULO_STATUS[ag.status] || ag.status}</p>
+                <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
               </div>
             ))}
           </div>
@@ -453,10 +511,11 @@ export default function PainelBarbeiro() {
           {pendentes.map((ag) => (
             <div key={ag.id} className="card flex justify-between items-center">
               <div>
-                <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                 <p className="text-sm text-ink/60">
                   {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                 </p>
+                <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
               </div>
               <div className="flex gap-2">
                 <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responder(ag.id, "CONFIRMADO")}>
@@ -477,7 +536,7 @@ export default function PainelBarbeiro() {
           <div className="space-y-3">
             {pedidosCancelamento.map((ag) => (
               <div key={ag.id} className="card border-amber-300">
-                <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                 <p className="text-sm text-ink/60">
                   {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                 </p>
@@ -487,6 +546,7 @@ export default function PainelBarbeiro() {
                 <p className="text-xs text-ink/50 mt-1">
                   Fale com o cliente pra entender o motivo antes de decidir.
                 </p>
+                <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                 <div className="flex gap-2 mt-3">
                   <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirCancelamento(ag.id, true)}>
                     {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
@@ -544,7 +604,12 @@ export default function PainelBarbeiro() {
                   )}
                   <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
                 </div>
-                <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+                  {s.barbeiros.length === 1 && s.barbeiros[0].barbeiroId === meuId && (
+                    <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+                  )}
+                </div>
               </div>
             ))}
         </div>
@@ -613,7 +678,7 @@ export default function PainelBarbeiro() {
               {equipeAgendaHoje.map((ag) => (
                 <div key={ag.id} className="card flex justify-between items-center">
                   <div>
-                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                     <p className="text-sm text-ink/60">
                       {ag.barbeiro?.nome ?? "—"}
                       {" · "}
@@ -653,7 +718,7 @@ export default function PainelBarbeiro() {
                         agendaSelecionado.map((ag) => (
                           <div key={ag.id} className="flex justify-between items-center border-t border-line pt-2 first:border-t-0 first:pt-0">
                             <div>
-                              <p className="font-medium text-sm">{ag.cliente.nome} — {ag.servico.nome}</p>
+                              <p className="font-medium text-sm">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                               <p className="text-xs text-ink/60">{formatarDataCurta(ag.data)} · {formatarHora(ag.data)}</p>
                             </div>
                             <span className={`text-xs ${COR_STATUS[ag.status] || ""}`}>{ROTULO_STATUS[ag.status] || ag.status}</span>

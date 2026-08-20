@@ -26,7 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     where: { id: params.id },
     include: {
       barbeiro: { select: { nome: true, whatsapp: true, callmebotApiKey: true } },
-      servico: { select: { nome: true } },
+      servicos: { select: { nomeServico: true } },
       cliente: { select: { nome: true } },
     },
   });
@@ -46,7 +46,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Sem quebra de linha na mensagem que vai pro WhatsApp do barbeiro.
   const motivo = dados.data.motivo?.replace(/[\r\n]+/g, " ").trim() || null;
 
-  const { barbeiro, servico, cliente } = agendamento;
+  const { barbeiro, servicos, cliente } = agendamento;
+  const nomesCortes = servicos.map((s) => s.nomeServico).join(" + ");
   const dataFormatada = agendamento.data.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const horaFormatada = agendamento.data.toLocaleTimeString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await notificarCancelamentoDireto({
         whatsapp: barbeiro.whatsapp,
         apikey: barbeiro.callmebotApiKey,
-        mensagem: `${cliente?.nome ?? "Um cliente"} cancelou o pedido de ${servico.nome} de ${dataFormatada} às ${horaFormatada} antes de você confirmar.`,
+        mensagem: `${cliente?.nome ?? "Um cliente"} cancelou o pedido de ${nomesCortes} de ${dataFormatada} às ${horaFormatada} antes de você confirmar.`,
       });
     }
     return NextResponse.json({ ok: true });
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     await notificarSolicitacaoCancelamento({
       whatsapp: barbeiro.whatsapp,
       apikey: barbeiro.callmebotApiKey,
-      mensagem: `Pedido de cancelamento: ${cliente?.nome ?? "um cliente"} quer cancelar ${servico.nome} de ${dataFormatada} às ${horaFormatada}. Motivo: ${motivo ?? "não informado"}. Entre em contato com o cliente pra entender antes de decidir, ou acesse o painel pra confirmar ou manter o agendamento.`,
+      mensagem: `Pedido de cancelamento: ${cliente?.nome ?? "um cliente"} quer cancelar ${nomesCortes} de ${dataFormatada} às ${horaFormatada}. Motivo: ${motivo ?? "não informado"}. Entre em contato com o cliente pra entender antes de decidir, ou acesse o painel pra confirmar ou manter o agendamento.`,
     });
   }
 

@@ -12,10 +12,13 @@ const schema = z.object({
   atendeComoBarbeiro: z.boolean().optional(),
 });
 
-// GET: o próprio barbeiro (ou dono, pra "também corto cabelo") vê os
-// próprios dados de WhatsApp/notificação/foto.
+// GET: o próprio usuário (barbeiro, dono, ou cliente) vê os próprios
+// dados de WhatsApp/notificação/foto. CLIENTE só usa o campo whatsapp (pra
+// o barbeiro poder entrar em contato se precisar, ver GET /api/agendamentos)
+// — os outros campos não se aplicam a esse papel, mas não custa nada
+// devolver/aceitar de forma uniforme.
 export async function GET() {
-  const sessao = await exigirSessao(["BARBEIRO", "DONO"]);
+  const sessao = await exigirSessao(["BARBEIRO", "DONO", "CLIENTE"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const usuario = await db.usuario.findUnique({
@@ -29,7 +32,7 @@ export async function GET() {
 // PATCH: atualiza o próprio número/apikey do CallMeBot, foto, e (só pro
 // DONO) o interruptor "também corto cabelo".
 export async function PATCH(req: NextRequest) {
-  const sessao = await exigirSessao(["BARBEIRO", "DONO"]);
+  const sessao = await exigirSessao(["BARBEIRO", "DONO", "CLIENTE"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const dados = schema.safeParse(await req.json().catch(() => null));

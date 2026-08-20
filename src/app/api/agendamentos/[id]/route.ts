@@ -38,7 +38,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     where: { id: params.id },
     include: {
       cliente: { select: { nome: true } },
-      servico: { select: { nome: true } },
+      servicos: { select: { nomeServico: true } },
       // whatsapp/callmebotApiKey do próprio barbeiro (== sessao.usuarioId,
       // já confirmado logo abaixo) inclusos aqui pra não precisar de uma
       // segunda consulta lá embaixo, na hora de notificar o cancelamento.
@@ -67,12 +67,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ erro: "Esse agendamento não pode mudar para esse status" }, { status: 409 });
   }
 
-  // CONCLUIDO entra na soma do financeiro (ver /api/financeiro) — não pode
-  // ser marcado antes do horário realmente acontecer, senão conta
-  // faturamento de um atendimento que ainda nem ocorreu.
-  if (dados.data.status === "CONCLUIDO" && agendamento.data > new Date()) {
-    return NextResponse.json({ erro: "Esse agendamento ainda não aconteceu" }, { status: 409 });
-  }
+  // Decisão deliberada do usuário: o barbeiro pode marcar como CONCLUIDO
+  // mesmo antes do horário marcado (ou em outro dia qualquer) — o cliente
+  // pode ter ido atender em outro momento combinado informalmente. Já
+  // existiu uma trava aqui bloqueando isso (CONCLUIDO só depois do
+  // horário passar), removida de propósito a pedido do usuário.
 
   const atualizado = await db.agendamento.update({
     where: { id: params.id },
@@ -102,10 +101,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         hour: "2-digit",
         minute: "2-digit",
       });
+      const nomesCortes = agendamento.servicos.map((s) => s.nomeServico).join(" + ");
       await notificarCancelamentoConfirmado({
         whatsapp: barbeiro.whatsapp,
         apikey: barbeiro.callmebotApiKey,
-        mensagem: `Cancelamento confirmado: o agendamento de ${agendamento.servico.nome} com ${agendamento.cliente.nome} em ${dataFormatada} às ${horaFormatada} foi cancelado.`,
+        mensagem: `Cancelamento confirmado: o agendamento de ${nomesCortes} com ${agendamento.cliente.nome} em ${dataFormatada} às ${horaFormatada} foi cancelado.`,
       });
     }
   }

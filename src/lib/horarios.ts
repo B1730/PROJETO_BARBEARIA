@@ -31,22 +31,26 @@ export async function buscarAgendamentosOcupados(
   // cobre qualquer serviço com duração razoável.
   const margem = new Date(inicioDoDia.getTime() - 6 * 60 * 60 * 1000);
 
-  // select mínimo (não include do Servico inteiro) — essa função roda
-  // dentro da transação Serializable de criar agendamento
-  // (POST /api/agendamentos), então quanto menos ela trouxer, menos tempo
-  // a transação fica com lock aberto.
+  // select mínimo — essa função roda dentro da transação Serializable de
+  // criar agendamento (POST /api/agendamentos), então quanto menos ela
+  // trouxer, menos tempo a transação fica com lock aberto.
   const agendamentos = await cliente.agendamento.findMany({
     where: {
       barbeiroId,
       data: { gte: margem, lte: fimDoDia },
       status: { in: ["PENDENTE", "CONFIRMADO"] },
     },
-    select: { data: true, duracaoMinutos: true, servico: { select: { duracaoMinutos: true } } },
+    select: { data: true, duracaoMinutos: true },
   });
 
   return agendamentos.map((ag) => {
     const inicio = new Date(ag.data);
-    const duracao = ag.duracaoMinutos ?? ag.servico.duracaoMinutos;
+    // Um agendamento não tem mais um único Servico direto (pode ter vários
+    // cortes, ver AgendamentoServico) — duracaoMinutos já vem sempre
+    // preenchido como a soma deles (POST /api/agendamentos sempre grava
+    // isso). O fallback de 30min é só defensivo, pra uma linha antiga
+    // (de antes desse campo existir) que porventura ainda esteja nula.
+    const duracao = ag.duracaoMinutos ?? 30;
     return { inicio, fim: new Date(inicio.getTime() + duracao * 60000) };
   });
 }

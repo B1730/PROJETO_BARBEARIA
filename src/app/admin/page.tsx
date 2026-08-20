@@ -8,14 +8,50 @@ import Cabecalho from "@/components/Cabecalho";
 const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
-type Servico = { id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null };
+type Servico = {
+  id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
+  barbeiros: { barbeiroId: string }[];
+};
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
 type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type MeuAgendamento = {
   id: string; status: string; data: string;
-  cliente: { nome: string }; servico: { nome: string }; barbeiro?: { id: string };
+  cliente: { nome: string; email: string; whatsapp: string | null };
+  servicos: { nomeServico: string }[];
+  barbeiro?: { id: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
 };
+
+function nomesCortes(ag: MeuAgendamento) {
+  return ag.servicos.map((s) => s.nomeServico).join(" + ");
+}
+
+function DetalheCliente({ ag, aberto, onToggle }: { ag: MeuAgendamento; aberto: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <button onClick={onToggle} className="text-xs underline text-ink/50 mt-1">
+        {aberto ? "Ocultar contato" : "Ver contato"}
+      </button>
+      {aberto && (
+        <div className="mt-1 p-2 bg-line/30 rounded text-xs space-y-0.5">
+          <p>{ag.cliente.email}</p>
+          {ag.cliente.whatsapp ? (
+            <a
+              className="underline"
+              href={`https://wa.me/${ag.cliente.whatsapp.replace(/\D/g, "")}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Falar no WhatsApp ({ag.cliente.whatsapp})
+            </a>
+          ) : (
+            <p className="text-ink/40">Cliente não cadastrou WhatsApp</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function PainelAdmin() {
   const router = useRouter();
@@ -55,6 +91,15 @@ export default function PainelAdmin() {
   const [meuWhatsapp, setMeuWhatsapp] = useState("");
   const [meuCallmebotApiKey, setMeuCallmebotApiKey] = useState("");
   const [salvandoContato, setSalvandoContato] = useState(false);
+  const [detalhesExpandidos, setDetalhesExpandidos] = useState<Set<string>>(new Set());
+  function alternarDetalhe(id: string) {
+    setDetalhesExpandidos((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id);
+      else novo.add(id);
+      return novo;
+    });
+  }
 
   async function enviarImagem(arquivo: File, pasta: "cortes" | "barbeiros"): Promise<string> {
     const form = new FormData();
@@ -321,6 +366,17 @@ export default function PainelAdmin() {
     carregarBarbeirosEServicos(false);
   }
 
+  async function removerServico(id: string) {
+    setErro("");
+    const resp = await fetch(`/api/servicos/${id}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível excluir esse corte");
+      return;
+    }
+    carregarBarbeirosEServicos(false);
+  }
+
   if (carregando) {
     return (
       <>
@@ -406,7 +462,10 @@ export default function PainelAdmin() {
                 )}
                 <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
               </div>
-              <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+              <div className="flex items-center gap-3">
+                <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+                <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+              </div>
             </div>
           ))}
         </div>
@@ -474,11 +533,12 @@ export default function PainelAdmin() {
                 <h3 className="text-sm font-medium text-ink/70">Pedidos de cancelamento</h3>
                 {meusPedidosCancelamento.map((ag) => (
                   <div key={ag.id} className="card border-amber-300">
-                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                     <p className="text-sm text-ink/60">
                       {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                     </p>
                     <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+                    <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                     <div className="flex gap-2 mt-3">
                       <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirMeuCancelamento(ag.id, true)}>
                         {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
@@ -498,10 +558,11 @@ export default function PainelAdmin() {
               {meusPendentes.map((ag) => (
                 <div key={ag.id} className="card flex justify-between items-center">
                   <div>
-                    <p className="font-medium">{ag.cliente.nome} — {ag.servico.nome}</p>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                     <p className="text-sm text-ink/60">
                       {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                     </p>
+                    <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                   </div>
                   <div className="flex gap-2">
                     <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "CONFIRMADO")}>

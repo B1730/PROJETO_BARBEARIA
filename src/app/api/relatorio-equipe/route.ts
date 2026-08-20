@@ -46,24 +46,28 @@ export async function GET(req: NextRequest) {
 
   const barbeariaId = sessao.barbeariaId!;
 
-  const [barbeiros, servicos, porBarbeiroConcluidos, porBarbeiroServico, porBarbeiroCancelados, confirmadosNoPeriodo] =
+  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo] =
     await Promise.all([
       // BARBEIRO sempre entra; DONO só se "também atende" (regra de negócio 10).
       db.usuario.findMany({
         where: { barbeariaId, OR: [{ papel: "BARBEIRO" }, { papel: "DONO", atendeComoBarbeiro: true }] },
         select: { id: true, nome: true },
       }),
-      db.servico.findMany({ where: { barbeariaId }, select: { id: true, nome: true } }),
       db.agendamento.groupBy({
         by: ["barbeiroId"],
         where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
         _sum: { precoCobrado: true },
         _count: { _all: true },
       }),
-      db.agendamento.groupBy({
-        by: ["barbeiroId", "servicoId"],
-        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
-        _count: { _all: true },
+      // "Corte mais feito" por barbeiro: um agendamento pode ter vários
+      // cortes (ver AgendamentoServico), então isso não dá mais pra fazer
+      // com groupBy direto em Agendamento — groupBy não agrupa por campo de
+      // relação (barbeiroId mora em Agendamento, não em AgendamentoServico).
+      // Busca as linhas e agrega em memória, mesmo padrão já usado abaixo
+      // pro tempo médio de resposta.
+      db.agendamentoServico.findMany({
+        where: { agendamento: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } } },
+        select: { servicoId: true, nomeServico: true, agendamento: { select: { barbeiroId: true } } },
       }),
       // CANCELADO é terminal (nada transiciona a partir dele) — atualizadoEm
       // reflete de forma confiável o momento do cancelamento em si, então
@@ -79,18 +83,26 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-  const nomeServico = new Map(servicos.map((s) => [s.id, s.nome]));
-
   const faturamentoMap = new Map(
     porBarbeiroConcluidos.map((r) => [r.barbeiroId, { total: Number(r._sum.precoCobrado ?? 0), quantidade: r._count._all }])
   );
 
+  const contagemPorBarbeiroServico = new Map<string, Map<string, { nome: string; quantidade: number }>>();
+  for (const item of cortesConcluidos) {
+    const barbeiroId = item.agendamento.barbeiroId;
+    const porServico = contagemPorBarbeiroServico.get(barbeiroId) ?? new Map();
+    const atual = porServico.get(item.servicoId) ?? { nome: item.nomeServico, quantidade: 0 };
+    atual.quantidade += 1;
+    porServico.set(item.servicoId, atual);
+    contagemPorBarbeiroServico.set(barbeiroId, porServico);
+  }
   const corteMaisFeitoMap = new Map<string, { nome: string; quantidade: number }>();
-  for (const r of porBarbeiroServico) {
-    const atual = corteMaisFeitoMap.get(r.barbeiroId);
-    if (!atual || r._count._all > atual.quantidade) {
-      corteMaisFeitoMap.set(r.barbeiroId, { nome: nomeServico.get(r.servicoId) ?? "?", quantidade: r._count._all });
+  for (const [barbeiroId, porServico] of contagemPorBarbeiroServico) {
+    let melhor: { nome: string; quantidade: number } | null = null;
+    for (const v of porServico.values()) {
+      if (!melhor || v.quantidade > melhor.quantidade) melhor = v;
     }
+    if (melhor) corteMaisFeitoMap.set(barbeiroId, melhor);
   }
 
   const canceladosMap = new Map(porBarbeiroCancelados.map((r) => [r.barbeiroId, r._count._all]));

@@ -16,7 +16,8 @@ type Sessao = { usuario: { id: string; nome: string; papel: "CLIENTE" | "BARBEIR
 export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia: Barbearia; slug: string }) {
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [carregandoSessao, setCarregandoSessao] = useState(true);
-  const [servicoEscolhido, setServicoEscolhido] = useState<Servico | null>(null);
+  // Um agendamento pode ter mais de um corte (ex.: cabelo + barba).
+  const [servicosEscolhidos, setServicosEscolhidos] = useState<Servico[]>([]);
   const [barbeiroEscolhidoId, setBarbeiroEscolhidoId] = useState<string | null>(null);
   const [data, setData] = useState("");
   const [horarios, setHorarios] = useState<string[]>([]);
@@ -51,11 +52,41 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     setBarbeiroConfirmado(null);
   }
 
+  function alternarServico(s: Servico) {
+    setServicosEscolhidos((atual) =>
+      atual.some((x) => x.id === s.id) ? atual.filter((x) => x.id !== s.id) : [...atual, s]
+    );
+    setBarbeiroEscolhidoId(null);
+    setHoraEscolhida(null);
+    limparResultadoAnterior();
+  }
+
+  // Barbeiros que fazem TODOS os cortes escolhidos — precisa estar apto em
+  // cada um deles, não só em algum.
+  const barbeirosElegiveis = barbearia.usuarios.filter((u) =>
+    servicosEscolhidos.every((s) => (s.barbeiros.length === 0 ? true : s.barbeiros.some((b) => b.barbeiroId === u.id)))
+  );
+  const precoTotal = servicosEscolhidos.reduce((soma, s) => soma + Number(s.precoBase), 0);
+  const duracaoTotal = servicosEscolhidos.reduce((soma, s) => soma + s.duracaoMinutos, 0);
+
+  // Se trocar os cortes escolhidos tirar o barbeiro selecionado da lista de
+  // elegíveis (ex.: ele não faz um dos cortes recém-adicionados), desmarca
+  // ele — sem isso, ficava um barbeiro "escolhido" que não aparece mais
+  // como opção.
   useEffect(() => {
-    if (!servicoEscolhido || !barbeiroEscolhidoId || !data) return;
+    if (barbeiroEscolhidoId && !barbeirosElegiveis.some((b) => b.id === barbeiroEscolhidoId)) {
+      setBarbeiroEscolhidoId(null);
+      setHoraEscolhida(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [servicosEscolhidos]);
+
+  useEffect(() => {
+    if (servicosEscolhidos.length === 0 || !barbeiroEscolhidoId || !data) return;
     let cancelado = false;
     setCarregandoHorarios(true);
-    fetch(`/api/horarios-livres?barbeiroId=${barbeiroEscolhidoId}&servicoId=${servicoEscolhido.id}&data=${data}`)
+    const servicoIds = servicosEscolhidos.map((s) => s.id).join(",");
+    fetch(`/api/horarios-livres?barbeiroId=${barbeiroEscolhidoId}&servicoIds=${servicoIds}&data=${data}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelado) {
@@ -67,7 +98,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
         }
       });
     return () => { cancelado = true; };
-  }, [servicoEscolhido, barbeiroEscolhidoId, data]);
+  }, [servicosEscolhidos, barbeiroEscolhidoId, data]);
 
   async function confirmarAgendamento() {
     setMensagem("");
@@ -78,7 +109,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         barbeiroId: barbeiroEscolhidoId,
-        servicoId: servicoEscolhido!.id,
+        servicoIds: servicosEscolhidos.map((s) => s.id),
         data,
         hora: horaEscolhida,
       }),
@@ -104,13 +135,6 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     // sem depender de horaEscolhida (ver seção separada abaixo).
     setHoraEscolhida(null);
   }
-
-  // Barbeiros que efetivamente fazem o serviço escolhido
-  const barbeirosDoServico = servicoEscolhido
-    ? barbearia.usuarios.filter((u) =>
-        servicoEscolhido.barbeiros.length === 0 ? true : servicoEscolhido.barbeiros.some((b) => b.barbeiroId === u.id)
-      )
-    : [];
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-14">
@@ -142,56 +166,70 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       <h1 className="font-display text-3xl mb-8">{barbearia.nome}</h1>
 
       <section className="mb-8">
-        <h2 className="font-medium mb-3">1. Escolha o corte</h2>
+        <h2 className="font-medium mb-3">1. Escolha o(s) corte(s)</h2>
+        <p className="text-xs text-ink/50 mb-2">Pode escolher mais de um — por exemplo, cabelo + barba.</p>
         <div className="grid gap-2">
-          {barbearia.servicos.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                setServicoEscolhido(s);
-                setBarbeiroEscolhidoId(null);
-                setHoraEscolhida(null);
-                limparResultadoAnterior();
-              }}
-              className={`card text-left flex justify-between items-center gap-3 ${servicoEscolhido?.id === s.id ? "border-accent" : ""}`}
-            >
-              <div className="flex items-center gap-3">
-                {s.imagemUrl ? (
-                  <Image src={s.imagemUrl} alt={s.nome} width={48} height={48} className="h-12 w-12 rounded-md object-cover shrink-0" />
-                ) : (
-                  <div className="h-12 w-12 rounded-md bg-accentSoft shrink-0" aria-hidden />
-                )}
-                <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
-              </div>
-              <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
-            </button>
-          ))}
+          {barbearia.servicos.map((s) => {
+            const escolhido = servicosEscolhidos.some((x) => x.id === s.id);
+            return (
+              <button
+                key={s.id}
+                onClick={() => alternarServico(s)}
+                className={`card text-left flex justify-between items-center gap-3 ${escolhido ? "border-accent" : ""}`}
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`h-4 w-4 rounded border shrink-0 flex items-center justify-center text-[10px] ${escolhido ? "bg-accent border-accent text-white" : "border-line"}`}
+                    aria-hidden
+                  >
+                    {escolhido ? "✓" : ""}
+                  </span>
+                  {s.imagemUrl ? (
+                    <Image src={s.imagemUrl} alt={s.nome} width={48} height={48} className="h-12 w-12 rounded-md object-cover shrink-0" />
+                  ) : (
+                    <div className="h-12 w-12 rounded-md bg-accentSoft shrink-0" aria-hidden />
+                  )}
+                  <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+                </div>
+                <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+              </button>
+            );
+          })}
         </div>
+        {servicosEscolhidos.length > 0 && (
+          <p className="text-sm text-ink/70 mt-3">
+            Total: <strong>R$ {precoTotal.toFixed(2)}</strong> · {duracaoTotal} min
+          </p>
+        )}
       </section>
 
-      {servicoEscolhido && (
+      {servicosEscolhidos.length > 0 && (
         <section className="mb-8">
           <h2 className="font-medium mb-3">2. Escolha o profissional</h2>
-          <div className="grid gap-2">
-            {barbeirosDoServico.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => {
-                  setBarbeiroEscolhidoId(b.id);
-                  setHoraEscolhida(null);
-                  limparResultadoAnterior();
-                }}
-                className={`card text-left flex items-center gap-3 ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
-              >
-                {b.fotoUrl ? (
-                  <Image src={b.fotoUrl} alt={b.nome} width={40} height={40} className="h-10 w-10 rounded-full object-cover shrink-0" />
-                ) : (
-                  <div className="h-10 w-10 rounded-full bg-accentSoft shrink-0" aria-hidden />
-                )}
-                {b.nome}
-              </button>
-            ))}
-          </div>
+          {barbeirosElegiveis.length === 0 ? (
+            <p className="text-sm text-ink/50">Nenhum profissional faz todos os cortes escolhidos ao mesmo tempo.</p>
+          ) : (
+            <div className="grid gap-2">
+              {barbeirosElegiveis.map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => {
+                    setBarbeiroEscolhidoId(b.id);
+                    setHoraEscolhida(null);
+                    limparResultadoAnterior();
+                  }}
+                  className={`card text-left flex items-center gap-3 ${barbeiroEscolhidoId === b.id ? "border-accent" : ""}`}
+                >
+                  {b.fotoUrl ? (
+                    <Image src={b.fotoUrl} alt={b.nome} width={40} height={40} className="h-10 w-10 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-accentSoft shrink-0" aria-hidden />
+                  )}
+                  {b.nome}
+                </button>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -247,7 +285,8 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       {horaEscolhida && (
         <section className="card mb-4">
           <p className="mb-3">
-            Confirmar <strong>{servicoEscolhido?.nome}</strong> em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
+            Confirmar <strong>{servicosEscolhidos.map((s) => s.nome).join(" + ")}</strong> (R$ {precoTotal.toFixed(2)})
+            em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
           </p>
           <button className="btn-primary" disabled={enviando} onClick={confirmarAgendamento}>
             {enviando ? "Enviando..." : "Solicitar agendamento"}

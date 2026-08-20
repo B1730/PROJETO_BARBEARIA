@@ -119,19 +119,22 @@ src/app/
   api/
     auth/cadastro, auth/login, auth/logout, auth/sessao (GET, devolve usuário + barbearia logados)
     barbearias/[slug]         → GET público (dados da barbearia pro fluxo do cliente)
-    servicos, servicos/[id]   → dono gerencia cortes/preços
+    servicos, servicos/[id]   → dono (qualquer corte) ou barbeiro (só o próprio exclusivo)
+                                  gerencia cortes/preços — GET/PATCH/DELETE (regra de negócio 12)
     barbeiros                 → dono lista/cadastra barbeiros
     disponibilidade, disponibilidade/[id]  → barbeiro gerencia a própria agenda
-    horarios-livres           → GET público, usa calcularHorariosLivres()
-    agendamentos, agendamentos/[id]  → cliente pede; barbeiro confirma/recusa/cancela (PATCH)
+    horarios-livres           → GET público, ?servicoIds= (lista), usa calcularHorariosLivres()
+    agendamentos, agendamentos/[id]  → cliente pede (um ou mais cortes de uma vez, ver regra 12);
+                                  barbeiro confirma/recusa/cancela/conclui (PATCH)
     agendamentos/[id]/cancelar → POST, cliente cancela PENDENTE direto ou pede cancelamento de
                                   um CONFIRMADO (ver regra de negócio 9)
     financeiro                 → relatório por período, filtrado por papel (dono vê tudo da
                                   barbearia agrupado por barbeiro; barbeiro vê só o próprio)
     relatorio-equipe           → GET, só chefe/dono — desempenho por barbeiro num intervalo de
                                   datas livre (regra de negócio 11)
-    perfil                     → GET/PATCH, barbeiro edita o próprio whatsapp/callmebotApiKey;
-                                  dono usa pra ligar/desligar atendeComoBarbeiro (regra 10)
+    perfil                     → GET/PATCH, qualquer papel edita o próprio whatsapp (cliente só
+                                  isso; barbeiro também usa pra callmebotApiKey; dono também usa
+                                  pra ligar/desligar atendeComoBarbeiro, regra 10)
 ```
 
 ## Modelo de dados (resumo — ver prisma/schema.prisma para o completo)
@@ -147,23 +150,39 @@ src/app/
 - `Disponibilidade`: janela semanal que o barbeiro cadastra (dia da semana + hora início/fim).
   Tem `@@unique([barbeiroId, diaDaSemana, horaInicio, horaFim])` — não dá pra cadastrar a
   mesma janela duas vezes (horário diferente no mesmo dia continua permitido).
-- `Agendamento`: liga cliente + barbeiro + serviço + data/hora. `status` vai de
-  PENDENTE → CONFIRMADO/RECUSADO (decisão do barbeiro) → CONCLUIDO (depois do
-  atendimento acontecer — hoje isso não é automático, ver "Pendências" abaixo).
-  `precoCobrado` congela o preço no momento do agendamento, e
-  `duracaoMinutos` (nullable) congela a duração da mesma forma — nenhum dos
-  dois muda se o dono alterar o serviço depois. `duracaoMinutos` é nullable
-  só porque foi adicionado depois de já existirem agendamentos; o cálculo
-  de horário livre cai de volta pra duração atual do serviço quando é nulo.
+- `Agendamento`: liga cliente + barbeiro + data/hora — **não** tem mais um
+  `servicoId` único (ver `AgendamentoServico` logo abaixo e regra de
+  negócio 12: um agendamento pode ter mais de um corte, ex. cabelo +
+  barba). `status` vai de PENDENTE → CONFIRMADO/RECUSADO (decisão do
+  barbeiro) → CONCLUIDO (o barbeiro pode marcar a qualquer momento,
+  inclusive antes do horário marcado — ver regra de negócio 12).
+  `precoCobrado`/`duracaoMinutos` (nullable) congelam a **soma** dos
+  preços/durações de todos os cortes escolhidos no momento do
+  agendamento — nenhum dos dois muda se o dono alterar um `Servico`
+  depois; é assim que `calcularHorariosLivres()`, `/api/financeiro` e o
+  relatório de desempenho continuam funcionando sem precisar saber
+  quantos cortes tem cada agendamento. `duracaoMinutos` é nullable só
+  porque foi adicionado antes de existir `AgendamentoServico`.
   `cancelamentoSolicitadoEm`/`motivoCancelamento` (ambos nullable) guardam
   um pedido de cancelamento do cliente em aberto — ver regra de negócio 9.
   `confirmadoEm` (nullable) marca só uma vez, quando o status vira
   `CONFIRMADO` — usado pelo relatório de desempenho do chefe (regra 11).
+- `AgendamentoServico`: um corte dentro de um agendamento — cada linha
+  congela `nomeServico`/`precoServico`/`duracaoMinutos` do `Servico` no
+  momento da criação (mesmo padrão de `Agendamento.precoCobrado`), então
+  editar o `Servico` depois não muda retroativamente o que já foi
+  agendado/exibido. `@@unique([agendamentoId, servicoId])` — não dá pra
+  escolher o mesmo corte duas vezes no mesmo agendamento. Ver regra de
+  negócio 12.
 - `Usuario.senhaHash` é nullable: contas criadas via "Entrar com Google"
   não têm senha. `Usuario.fotoUrl` guarda a foto de perfil (usada pelo
   barbeiro), também no Supabase Storage. `Usuario.atendeComoBarbeiro`
   (default `false`) só faz sentido pra `papel: "DONO"` — liga/desliga se o
-  dono também corta cabelo, ver regra de negócio 10.
+  dono também corta cabelo, ver regra de negócio 10. `Usuario.whatsapp`
+  hoje é usado por qualquer papel: barbeiro/dono-que-atende pra
+  notificação via CallMeBot, e CLIENTE só guarda o número em si (sem
+  notificação automática), pra o barbeiro poder entrar em contato — ver
+  regra de negócio 12.
 
 ## Regras de negócio que não podem ser quebradas
 
@@ -339,6 +358,62 @@ src/app/
     pra cada granularidade. Inclui o `DONO` com `atendeComoBarbeiro`
     ativo (regra 10) na lista, já que ele também é um barbeiro de verdade
     agora.
+12. **Agendamento pode ter mais de um corte + barbeiro vê contato do
+    cliente + corte pode ser excluído** — três mudanças relacionadas,
+    entregues juntas:
+    - **Múltiplos cortes por agendamento**: o cliente escolhe um ou mais
+      cortes de uma vez (ex.: cabelo + barba) — ver `AgendamentoServico`
+      em "Modelo de dados". `POST /api/agendamentos` recebe
+      `servicoIds: string[]` (não mais `servicoId`), confere que o
+      barbeiro escolhido faz **todos** os cortes selecionados (não só
+      algum), soma preço e duração de todos pra `precoCobrado`/
+      `duracaoMinutos`, e grava uma linha de `AgendamentoServico` por
+      corte dentro da mesma transação que cria o `Agendamento`.
+      `GET /api/horarios-livres` ganhou o mesmo tratamento
+      (`?servicoIds=id1,id2`, separado por vírgula) — a grade de horários
+      já leva em conta a duração somada de todos os cortes escolhidos, não
+      só de um. Na tela do cliente (`[slug]/page.tsx`/
+      `PaginaBarbeariaCliente.tsx`), a etapa 1 virou seleção múltipla
+      (clicar liga/desliga um corte, não troca o escolhido), e a etapa 2
+      (escolher o profissional) mostra só quem atende **todos** os cortes
+      escolhidos ao mesmo tempo (interseção, não união).
+    - **Barbeiro vê os dados de contato do cliente**: `GET
+      /api/agendamentos` agora inclui `email`/`whatsapp` no `cliente` de
+      cada agendamento (antes só tinha nome) — como essa rota já filtra
+      por sessão (barbeiro só vê agendamentos da própria barbearia,
+      cliente só vê os próprios), isso nunca vaza dado de outro cliente.
+      Nas telas do barbeiro/dono (`barbeiro/page.tsx`, `admin/page.tsx`),
+      um botão "Ver contato" em cada agendamento abre/fecha esses dados
+      (incluindo link direto pro WhatsApp) — escondido por padrão pra não
+      poluir os cartões. Pra isso funcionar de verdade, o cliente agora
+      também informa o próprio WhatsApp: campo opcional no cadastro por
+      e-mail/senha (`POST /api/auth/cadastro`), e editável a qualquer
+      momento em `/meus-agendamentos` (reaproveitando `PATCH /api/perfil`,
+      que passou a aceitar `CLIENTE` também, não só `BARBEIRO`/`DONO`) —
+      cobre também quem se cadastrou com Google, que não passa por
+      nenhuma tela pra informar isso na hora.
+    - **Corte pode ser excluído**: `DELETE /api/servicos/[id]` (já
+      existia, mas sem interface — ver "Pendências") passou a aceitar
+      `BARBEIRO` além de `DONO`, mas só pra excluir um corte que seja
+      **exclusivamente dele** (`ServicoBarbeiro` com exatamente uma linha,
+      apontando pro próprio barbeiro — ver regra 5); um corte de alcance
+      geral (criado pelo dono) só o dono exclui. Botão "Excluir" novo nas
+      listas de corte de `admin/page.tsx` (qualquer corte) e
+      `barbeiro/page.tsx`/"Meus cortes" (só os próprios exclusivos).
+    - **Decisão deliberada do usuário, reversão de uma trava anterior**:
+      `PATCH /api/agendamentos/[id]` não bloqueia mais marcar
+      `CONCLUIDO` antes do horário marcado acontecer — antes disso dava
+      409 ("ainda não aconteceu"), proposital desde a segunda auditoria
+      pra não contar faturamento de um atendimento que ainda nem tinha
+      ocorrido. O usuário pediu a remoção porque, na prática, o cliente
+      pode aparecer num horário diferente do que marcou (combinado por
+      fora do app) — o barbeiro decide quando concluir, sem depender do
+      horário exato do agendamento. Isso já fazia o horário voltar a
+      ficar livre sem nenhuma mudança adicional: `CONCLUIDO` nunca esteve
+      na lista de status que `calcularHorariosLivres()`/
+      `buscarAgendamentosOcupados()` tratam como ocupado
+      (`["PENDENTE", "CONFIRMADO"]`), então assim que o barbeiro conclui,
+      o horário original já aparece livre de novo pra outro cliente.
 
 ## Pendências conhecidas / próximos passos (o usuário já sabe disso)
 
@@ -356,9 +431,9 @@ src/app/
 - Não existe notificação (e-mail/WhatsApp) quando o barbeiro confirma ou recusa.
 - Não existe bloqueio de horário por exceção (ex: barbeiro de folga num
   dia específico dentro da janela normal de disponibilidade).
-- Não existe tela pra editar/desativar um corte já cadastrado ou trocar sua
-  foto depois de criado (a API já suporta via `PATCH`/`DELETE` em
-  `servicos/[id]`, só falta a interface).
+- Não existe tela pra **editar** um corte já cadastrado (nome/preço/
+  duração/foto) — só cadastrar e excluir (ver regra de negócio 12); a API
+  já suporta isso via `PATCH /api/servicos/[id]`, só falta a interface.
 - Login com Google só cobre CLIENTE e DONO. BARBEIRO não usa esse fluxo —
   ver regra de negócio 7 acima. **Entrar com Google é login estrito**
   (`/entrar`, `?modo=entrar` — erro "Conta não encontrada" se não
@@ -817,6 +892,36 @@ sessão).
   só um pedido; `confirmadoEm` é preenchido ao confirmar; barbeiro comum
   recebe 403 no relatório; chefe recebe os números corretos, incluindo
   contagem de cancelados e tempo médio de resposta.
+- **Agendamento com múltiplos cortes + contato do cliente + excluir corte
+  + concluir antes do horário**: ver regra de negócio 12 pro detalhe
+  completo. Resumo: `Agendamento` perdeu o `servicoId` único e ganhou uma
+  relação com `AgendamentoServico` (nova tabela) — o cliente escolhe um ou
+  mais cortes de uma vez (ex.: cabelo + barba), com preço/duração somados
+  automaticamente; `POST /api/agendamentos` e `GET /api/horarios-livres`
+  passaram a receber `servicoIds`/`?servicoIds=` (lista) em vez de um id
+  só, e a etapa "escolha o profissional" na tela do cliente passou a
+  mostrar só quem atende **todos** os cortes escolhidos (interseção).
+  `GET /api/agendamentos` passou a incluir e-mail/WhatsApp do cliente em
+  cada agendamento, com um botão "Ver contato" (escondido por padrão) nas
+  telas do barbeiro/dono; pra isso ter dado pra ver, cliente agora também
+  informa o próprio WhatsApp (opcional no cadastro por e-mail/senha,
+  editável a qualquer hora em `/meus-agendamentos` via `PATCH
+  /api/perfil`, que passou a aceitar `CLIENTE`). `DELETE
+  /api/servicos/[id]` passou a aceitar `BARBEIRO` além de `DONO`, mas só
+  pra excluir um corte exclusivamente próprio — botão "Excluir" novo nas
+  duas telas de corte. E, decisão deliberada do usuário: `PATCH
+  /api/agendamentos/[id]` não bloqueia mais concluir antes do horário
+  marcado — o cliente pode aparecer num horário combinado por fora do
+  app, então quem decide quando concluir é o barbeiro; o horário original
+  já volta a ficar livre sozinho, sem mudança adicional, porque
+  `CONCLUIDO` nunca esteve entre os status que ocupam a agenda. Precisou
+  de migração removendo `Agendamento.servicoId` e criando
+  `AgendamentoServico` — banco de teste limpo depois, dado que agendamentos
+  antigos não tinham como ser migrados automaticamente pra nova tabela.
+  Testado de ponta a ponta: agendamento com 2 cortes soma preço/duração
+  certinho; barbeiro vê os 2 cortes + contato do cliente; concluir antes
+  do horário funciona e libera o horário de novo; barbeiro exclui o
+  próprio corte exclusivo mas não um de alcance geral.
 
 ## Ambiente / variáveis necessárias
 

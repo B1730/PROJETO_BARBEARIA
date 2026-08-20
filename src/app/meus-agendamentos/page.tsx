@@ -23,10 +23,14 @@ type Agendamento = {
   data: string;
   precoCobrado: string;
   barbeiro: { nome: string };
-  servico: { nome: string };
+  servicos: { nomeServico: string }[];
   cancelamentoSolicitadoEm: string | null;
   motivoCancelamento: string | null;
 };
+
+function nomesCortes(ag: Agendamento) {
+  return ag.servicos.map((s) => s.nomeServico).join(" + ");
+}
 
 export default function MeusAgendamentos() {
   const [sessao, setSessao] = useState<{ papel: string } | null | undefined>(undefined);
@@ -36,28 +40,58 @@ export default function MeusAgendamentos() {
   const [pedindoCancelamentoId, setPedindoCancelamentoId] = useState<string | null>(null);
   const [motivo, setMotivo] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [meuWhatsapp, setMeuWhatsapp] = useState("");
+  const [salvandoWhatsapp, setSalvandoWhatsapp] = useState(false);
+  const [sucessoWhatsapp, setSucessoWhatsapp] = useState("");
 
   async function carregar() {
-    // As duas requisições não dependem uma da outra — GET /api/agendamentos
-    // já se limita aos dados do usuário logado, seja ele qual for; só não
-    // usamos o resultado se não for CLIENTE. Rodar em paralelo evita esperar
-    // a sessão responder antes de nem começar a buscar os agendamentos.
-    const [sResp, aResp] = await Promise.all([
+    // As três requisições não dependem uma da outra — GET /api/agendamentos
+    // e GET /api/perfil já se limitam aos dados do usuário logado, seja ele
+    // qual for; só não usamos o resultado se não for CLIENTE. Rodar em
+    // paralelo evita esperar a sessão responder antes de nem começar a
+    // buscar o resto.
+    const [sResp, aResp, pResp] = await Promise.all([
       fetch("/api/auth/sessao"),
       fetch("/api/agendamentos"),
+      fetch("/api/perfil"),
     ]);
     if (!sResp.ok) { setSessao(null); setCarregando(false); return; }
     const s = await sResp.json();
     setSessao(s.usuario);
-    if (s.usuario.papel === "CLIENTE" && aResp.ok) {
-      const a = await aResp.json();
-      const lista: Agendamento[] = (a.agendamentos || []).sort((x: Agendamento, y: Agendamento) => x.data.localeCompare(y.data));
-      setAgendamentos(lista);
+    if (s.usuario.papel === "CLIENTE") {
+      if (aResp.ok) {
+        const a = await aResp.json();
+        const lista: Agendamento[] = (a.agendamentos || []).sort((x: Agendamento, y: Agendamento) => x.data.localeCompare(y.data));
+        setAgendamentos(lista);
+      }
+      if (pResp.ok) {
+        const p = await pResp.json();
+        setMeuWhatsapp(p.usuario?.whatsapp || "");
+      }
     }
     setCarregando(false);
   }
 
   useEffect(() => { carregar(); }, []);
+
+  async function salvarMeuWhatsapp(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setSucessoWhatsapp("");
+    setSalvandoWhatsapp(true);
+    const resp = await fetch("/api/perfil", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ whatsapp: meuWhatsapp }),
+    });
+    setSalvandoWhatsapp(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível salvar");
+      return;
+    }
+    setSucessoWhatsapp("Salvo!");
+  }
 
   function abrirPedidoCancelamento(id: string) {
     setErro("");
@@ -98,7 +132,26 @@ export default function MeusAgendamentos() {
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-14">
-      <h1 className="font-display text-3xl mb-8">Meus agendamentos</h1>
+      <h1 className="font-display text-3xl mb-6">Meus agendamentos</h1>
+
+      <div className="card mb-8">
+        <h2 className="font-medium mb-1">Meu WhatsApp</h2>
+        <p className="text-xs text-ink/50 mb-3">
+          Deixe seu número aqui pra o barbeiro poder entrar em contato se precisar.
+        </p>
+        <form onSubmit={salvarMeuWhatsapp} className="flex flex-wrap gap-2">
+          <input
+            className="input flex-1 min-w-[200px]"
+            placeholder="Seu WhatsApp (com DDD e país, só números)"
+            value={meuWhatsapp}
+            onChange={(e) => setMeuWhatsapp(e.target.value)}
+          />
+          <button className="btn-primary" disabled={salvandoWhatsapp}>
+            {salvandoWhatsapp ? "Salvando..." : "Salvar"}
+          </button>
+        </form>
+        {sucessoWhatsapp && <p className="text-sm text-green-600 mt-2">{sucessoWhatsapp}</p>}
+      </div>
 
       {erro && <p className="text-sm text-red-600 mb-4">{erro}</p>}
 
@@ -109,7 +162,7 @@ export default function MeusAgendamentos() {
           const podeCancelar = ["PENDENTE", "CONFIRMADO"].includes(ag.status) && !ag.cancelamentoSolicitadoEm;
           return (
             <div key={ag.id} className="card">
-              <p className="font-medium">{ag.servico.nome} com {ag.barbeiro.nome}</p>
+              <p className="font-medium">{nomesCortes(ag)} com {ag.barbeiro.nome}</p>
               <p className="text-sm text-ink/60">
                 {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                 {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}

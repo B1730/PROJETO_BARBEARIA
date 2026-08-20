@@ -60,10 +60,14 @@ model Usuario {
   papel         PapelUsuario
   criadoEm      DateTime      @default(now())
 
-  // Usado só por BARBEIRO, pra notificação de novo agendamento via
-  // CallMeBot (ver src/lib/whatsapp.ts). callmebotApiKey é a chave pessoal
-  // que o CallMeBot devolve depois que o barbeiro ativa o próprio número —
-  // não dá pra gerar isso do nosso lado, é o barbeiro quem ativa.
+  // whatsapp é usado por qualquer papel: BARBEIRO/DONO(atendeComoBarbeiro)
+  // pra notificação de novo agendamento via CallMeBot (ver
+  // src/lib/whatsapp.ts, callmebotApiKey é a chave pessoal que o CallMeBot
+  // devolve depois que a pessoa ativa o próprio número — não dá pra gerar
+  // isso do nosso lado); e CLIENTE só guarda o número em si (sem
+  // callmebotApiKey, cliente não recebe notificação automática), pra o
+  // barbeiro poder entrar em contato se precisar (ver GET /api/agendamentos,
+  // que inclui isso no `cliente` pra quem já pode ver aquele agendamento).
   whatsapp        String?
   callmebotApiKey String?
 
@@ -122,7 +126,7 @@ model Servico {
   imagemUrl     String?
 
   barbeiros     ServicoBarbeiro[]
-  agendamentos  Agendamento[]
+  agendamentos  AgendamentoServico[]
 
   @@index([barbeariaId])
 }
@@ -171,17 +175,22 @@ model Agendamento {
   barbeiroId    String
   barbeiro      Usuario           @relation("AgendamentosDoBarbeiro", fields: [barbeiroId], references: [id])
 
-  servicoId     String
-  servico       Servico           @relation(fields: [servicoId], references: [id])
+  // Um agendamento pode ter mais de um corte (ex.: cabelo + barba) — ver
+  // AgendamentoServico. precoCobrado/duracaoMinutos abaixo já são a SOMA
+  // de todos os cortes escolhidos, congelada no momento da criação; é
+  // assim que calcularHorariosLivres() (src/lib/horarios.ts),
+  // /api/financeiro e o relatório de desempenho continuam funcionando sem
+  // precisar saber quantos cortes tem cada agendamento — só somam esses
+  // dois campos, igual antes.
+  servicos      AgendamentoServico[]
 
   data          DateTime          // data e hora de início do agendamento
-  precoCobrado  Decimal           @db.Decimal(10, 2) // "congela" o preço no momento do agendamento
-  // "Congela" a duração do serviço no momento do agendamento, igual
+  precoCobrado  Decimal           @db.Decimal(10, 2) // "congela" a soma dos preços no momento do agendamento
+  // "Congela" a soma das durações dos cortes escolhidos, igual
   // precoCobrado — sem isso, mudar duracaoMinutos de um Servico depois que
   // já existem agendamentos muda retroativamente o cálculo de conflito de
   // horário deles (ver src/lib/horarios.ts). Nullable só pra não exigir
-  // backfill dos agendamentos criados antes desse campo existir — nesses
-  // casos o cálculo cai de volta pra duração atual do serviço.
+  // backfill dos agendamentos criados antes desse campo existir.
   duracaoMinutos Int?
   status        StatusAgendamento @default(PENDENTE)
 
@@ -219,4 +228,25 @@ model Agendamento {
   // concorrentes não consigam criar dois agendamentos pro mesmo barbeiro no
   // mesmo instante, mesmo que ambas passem pela revalidação em memória.
   @@unique([barbeiroId, data])
+}
+
+// Um corte dentro de um agendamento (ex.: "cabelo" e "barba" no mesmo
+// horário) — cada linha aqui congela nome/preço/duração do Servico no
+// momento em que o agendamento foi criado, mesmo padrão de
+// Agendamento.precoCobrado: se o dono editar o Servico depois (nome,
+// preço), não muda retroativamente o que já foi agendado/exibido.
+model AgendamentoServico {
+  id            String      @id @default(cuid())
+  agendamentoId String
+  agendamento   Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  servicoId     String
+  servico       Servico     @relation(fields: [servicoId], references: [id])
+
+  nomeServico    String
+  precoServico   Decimal @db.Decimal(10, 2)
+  duracaoMinutos Int
+
+  @@index([agendamentoId])
+  // Não dá pra escolher o mesmo corte duas vezes no mesmo agendamento.
+  @@unique([agendamentoId, servicoId])
 }
