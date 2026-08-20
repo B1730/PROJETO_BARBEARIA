@@ -134,6 +134,8 @@ src/app/
 - `ServicoBarbeiro`: tabela de ligação — permite cada barbeiro ter um preço
   próprio para o mesmo corte, se quiser (opcional, senão usa `precoBase`).
 - `Disponibilidade`: janela semanal que o barbeiro cadastra (dia da semana + hora início/fim).
+  Tem `@@unique([barbeiroId, diaDaSemana, horaInicio, horaFim])` — não dá pra cadastrar a
+  mesma janela duas vezes (horário diferente no mesmo dia continua permitido).
 - `Agendamento`: liga cliente + barbeiro + serviço + data/hora. `status` vai de
   PENDENTE → CONFIRMADO/RECUSADO (decisão do barbeiro) → CONCLUIDO (depois do
   atendimento acontecer — hoje isso não é automático, ver "Pendências" abaixo).
@@ -525,6 +527,14 @@ sessão).
   comum tentando ver de outro colega continua dando 403. Na seção
   "Barbeiros contratados" do chefe, clicar num nome agora abre/fecha a
   agenda (pendente + confirmado) daquele contratado especificamente.
+- **Trava contra disponibilidade duplicada**: `Disponibilidade` ganhou
+  `@@unique([barbeiroId, diaDaSemana, horaInicio, horaFim])` (migração
+  `disponibilidade_sem_duplicata`) — um barbeiro não consegue mais
+  cadastrar a mesma janela (mesmo dia da semana + mesmo início + mesmo
+  fim) duas vezes. `POST /api/disponibilidade` trata o erro de constraint
+  (P2002) e devolve 409 "Você já tem esse horário cadastrado nesse dia"
+  em vez de deixar estourar um 500 cru. Um horário diferente no mesmo dia
+  continua sendo permitido normalmente — só a janela idêntica é barrada.
 
 ## Ambiente / variáveis necessárias
 
