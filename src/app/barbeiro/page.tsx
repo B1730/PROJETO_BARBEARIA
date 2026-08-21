@@ -41,6 +41,8 @@ type Agendamento = {
   barbeiro?: { id: string; nome: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
   ocultoPeloBarbeiro: boolean;
+  concluidoEm: string | null;
+  observacoes: string | null;
 };
 type Servico = {
   id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
@@ -632,6 +634,9 @@ export default function PainelBarbeiro() {
                     {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                     {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
                   </p>
+                  {ag.observacoes && (
+                    <p className="text-xs text-amber-700 mt-1">{ag.observacoes}</p>
+                  )}
                 </div>
                 <button
                   className="text-sm text-ink/40 hover:text-ink shrink-0"

@@ -224,6 +224,19 @@ model Agendamento {
   // aconteceu, não pra quando foi aceito.
   confirmadoEm  DateTime?
 
+  // Marcado uma única vez, no exato momento em que o status vira CONCLUIDO
+  // — mesmo padrão de confirmadoEm (TRANSICOES_PERMITIDAS em
+  // PATCH /api/agendamentos/[id] só permite chegar em CONCLUIDO vindo de
+  // CONFIRMADO, e nada transiciona a partir de CONCLUIDO, então isso nunca
+  // é sobrescrito). Existe pro relatório de desempenho poder mostrar a
+  // data marcada ao lado da data em que o corte foi de fato concluído.
+  concluidoEm   DateTime?
+  // Preenchido automaticamente (nunca editável pelo barbeiro) quando a
+  // conclusão acontece num dia diferente do agendado (comparando em
+  // America/Sao_Paulo) — ex.: "Concluído em 21/08/2026 — agendado para
+  // 25/08/2026.". Continua null quando as datas batem.
+  observacoes   String?
+
   criadoEm      DateTime          @default(now())
   atualizadoEm  DateTime          @updatedAt
 

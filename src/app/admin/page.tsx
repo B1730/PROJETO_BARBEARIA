@@ -20,6 +20,8 @@ type MeuAgendamento = {
   barbeiro?: { id: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
   ocultoPeloBarbeiro: boolean;
+  concluidoEm: string | null;
+  observacoes: string | null;
 };
 
 const INTERVALO_POLLING_MS = 8000;
@@ -847,6 +849,9 @@ export default function PainelAdmin() {
                     <p className="text-sm text-ink/60">
                       {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                     </p>
+                    {ag.observacoes && (
+                      <p className="text-xs text-amber-700 mt-1">{ag.observacoes}</p>
+                    )}
                   </div>
                   <button
                     className="text-sm text-ink/40 hover:text-ink shrink-0"

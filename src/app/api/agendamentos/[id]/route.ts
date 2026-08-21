@@ -22,6 +22,16 @@ const TRANSICOES_PERMITIDAS: Record<string, string[]> = {
   CANCELADO: ["PENDENTE", "CONFIRMADO"],
 };
 
+// "YYYY-MM-DD" em America/Sao_Paulo — usado só pra comparar dia marcado vs.
+// dia de conclusão (nunca pra gravar no banco, que continua em instante
+// UTC de verdade).
+function diaBrasil(d: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+function dataBrasilFormatada(d: Date) {
+  return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
 // PATCH: só o barbeiro dono do agendamento pode confirmar/recusar/cancelar
 // (ou o dono da barbearia, quando o agendamento é dele mesmo — ver regra
 // de negócio 10, "atendeComoBarbeiro"; a checagem de dono do agendamento
@@ -86,6 +96,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // existiu uma trava aqui bloqueando isso (CONCLUIDO só depois do
   // horário passar), removida de propósito a pedido do usuário.
 
+  // Quando a conclusão acontece num dia diferente do agendado (antes OU
+  // depois — o objetivo é visibilidade de qualquer divergência, não só
+  // antecipação), observacoes recebe um texto automático — nunca editável
+  // pelo barbeiro, é só um registro do sistema. Continua null quando os
+  // dias batem.
+  const agora = new Date();
+  const concluindoComDivergencia =
+    dados.data.status === "CONCLUIDO" && diaBrasil(agora) !== diaBrasil(agendamento.data);
+
   const atualizado = await db.agendamento.update({
     where: { id: params.id },
     data: {
@@ -102,6 +121,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       // GET /api/relatorio-equipe). TRANSICOES_PERMITIDAS já garante que só
       // se chega em CONFIRMADO vindo de PENDENTE, então isso nunca sobrescreve.
       ...(dados.data.status === "CONFIRMADO" ? { confirmadoEm: new Date() } : {}),
+      // Mesmo padrão de confirmadoEm: só na primeira vez que vira CONCLUIDO
+      // (TRANSICOES_PERMITIDAS só permite chegar aqui vindo de CONFIRMADO,
+      // e nada transiciona a partir de CONCLUIDO).
+      ...(dados.data.status === "CONCLUIDO"
+        ? {
+            concluidoEm: agora,
+            ...(concluindoComDivergencia
+              ? { observacoes: `Concluído em ${dataBrasilFormatada(agora)} — agendado para ${dataBrasilFormatada(agendamento.data)}.` }
+              : {}),
+          }
+        : {}),
     },
   });
 

@@ -35,6 +35,11 @@ export async function GET(req: NextRequest) {
   }).format(new Date());
   const [anoHoje, mesHoje] = hojeBrasil.split("-").map(Number);
 
+  // Só pra comparar dia marcado vs. dia de conclusão (a lista de detalhe
+  // de cortes concluídos, mais abaixo) — nunca usado pra filtrar/gravar.
+  const diaBrasilDe = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+
   const [anoDe, mesDe, diaDe] = deParam ? deParam.split("-").map(Number) : [anoHoje, mesHoje, 1];
   const [anoAte, mesAte, diaAte] = ateParam ? ateParam.split("-").map(Number) : [anoHoje, mesHoje, new Date(anoHoje, mesHoje, 0).getDate()];
 
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest) {
     whereBarbeiros.id = sessao.usuarioId;
   }
 
-  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo, porBarbeiroTotal] =
+  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo, porBarbeiroTotal, agendamentosConcluidosDetalhe] =
     await Promise.all([
       db.usuario.findMany({ where: whereBarbeiros, select: { id: true, nome: true } }),
       db.agendamento.groupBy({
@@ -95,6 +100,14 @@ export async function GET(req: NextRequest) {
         where: { barbeariaId, data: { gte: inicio, lt: fim } },
         _count: { _all: true },
       }),
+      // Lista individual (não agregada) de cortes concluídos no período,
+      // com data marcada + data de conclusão — usada pra tela mostrar as
+      // duas datas por corte (ver regra de negócio 11).
+      db.agendamento.findMany({
+        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
+        select: { id: true, barbeiroId: true, data: true, concluidoEm: true, servicos: { select: { nomeServico: true } } },
+        orderBy: { data: "desc" },
+      }),
     ]);
 
   const faturamentoMap = new Map(
@@ -117,6 +130,22 @@ export async function GET(req: NextRequest) {
       if (!melhor || v.quantidade > melhor.quantidade) melhor = v;
     }
     if (melhor) corteMaisFeitoMap.set(barbeiroId, melhor);
+  }
+
+  const detalheConcluidosMap = new Map<
+    string,
+    { id: string; data: Date; concluidoEm: Date | null; nomesCortes: string; divergente: boolean }[]
+  >();
+  for (const ag of agendamentosConcluidosDetalhe) {
+    const lista = detalheConcluidosMap.get(ag.barbeiroId) ?? [];
+    lista.push({
+      id: ag.id,
+      data: ag.data,
+      concluidoEm: ag.concluidoEm,
+      nomesCortes: ag.servicos.map((s) => s.nomeServico).join(" + "),
+      divergente: !!ag.concluidoEm && diaBrasilDe(ag.concluidoEm) !== diaBrasilDe(ag.data),
+    });
+    detalheConcluidosMap.set(ag.barbeiroId, lista);
   }
 
   const canceladosMap = new Map(porBarbeiroCancelados.map((r) => [r.barbeiroId, r._count._all]));
@@ -144,6 +173,7 @@ export async function GET(req: NextRequest) {
       totalAgendamentos: totalMap.get(b.id) ?? 0,
       tempoMedioParaAceitarMinutos: tempos.length > 0 ? tempos.reduce((a, c) => a + c, 0) / tempos.length : null,
       pedidosAceitosNoPeriodo: tempos.length,
+      cortesConcluidosDetalhe: detalheConcluidosMap.get(b.id) ?? [],
     };
   });
 

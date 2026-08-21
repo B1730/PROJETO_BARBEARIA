@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
 
+type CorteConcluidoDetalhe = {
+  id: string;
+  data: string;
+  concluidoEm: string | null;
+  nomesCortes: string;
+  divergente: boolean;
+};
 type LinhaBarbeiro = {
   barbeiroId: string;
   nome: string;
@@ -15,7 +22,12 @@ type LinhaBarbeiro = {
   cortesCancelados: number;
   tempoMedioParaAceitarMinutos: number | null;
   pedidosAceitosNoPeriodo: number;
+  cortesConcluidosDetalhe: CorteConcluidoDetalhe[];
 };
+
+function formatarDataHora(iso: string) {
+  return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" });
+}
 
 // Datas calculadas a partir do fuso de Brasília (não do fuso do navegador
 // de quem acessa) — mesmo padrão de src/lib/horarios.ts e de hojeBrasil()
@@ -217,6 +229,30 @@ export default function DesempenhoEquipe() {
                   </p>
                 </div>
               </div>
+
+              {l.cortesConcluidosDetalhe.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-line">
+                  <p className="text-xs text-ink/50 mb-2">
+                    Cortes concluídos no período — data marcada e data em que foi concluído
+                  </p>
+                  <div className="space-y-1.5">
+                    {l.cortesConcluidosDetalhe.map((c) => (
+                      <div key={c.id} className={`text-xs flex justify-between gap-2 ${c.divergente ? "text-amber-700" : "text-ink/60"}`}>
+                        <span className="truncate">{c.nomesCortes}</span>
+                        <span className="shrink-0">
+                          agendado {formatarDataHora(c.data)}
+                          {c.concluidoEm && (
+                            <>
+                              {" · "}concluído {formatarDataHora(c.concluidoEm)}
+                              {c.divergente && " ⚠"}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
