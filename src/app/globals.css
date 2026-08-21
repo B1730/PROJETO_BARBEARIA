@@ -7,11 +7,11 @@ body {
 }
 
 .btn-primary {
-  @apply bg-accent text-white rounded-md px-4 py-2 font-medium hover:opacity-90 transition disabled:opacity-50;
+  @apply bg-accent text-white rounded-md px-4 py-2 font-medium hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
 }
 
 .btn-secondary {
-  @apply bg-white border border-line text-ink rounded-md px-4 py-2 font-medium hover:bg-accentSoft transition;
+  @apply bg-white border border-line text-ink rounded-md px-4 py-2 font-medium hover:bg-accentSoft transition disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
 }
 
 .card {

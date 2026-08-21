@@ -24,26 +24,32 @@ function FormularioFinalizar() {
     e.preventDefault();
     setErro("");
     setCarregando(true);
-    const resp = await fetch("/api/auth/google/finalizar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, nomeBarbearia }),
-    });
-    const dados = await resp.json();
-    setCarregando(false);
-    if (!resp.ok) {
-      setErro(dados.erro || "Não foi possível concluir o cadastro");
-      return;
+    try {
+      const resp = await fetch("/api/auth/google/finalizar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, nomeBarbearia }),
+      });
+      const dados = await resp.json();
+      if (!resp.ok) {
+        setCarregando(false);
+        setErro(dados.erro || "Não foi possível concluir o cadastro");
+        return;
+      }
+      router.push("/admin");
+    } catch {
+      setCarregando(false);
+      setErro("Não foi possível conectar. Tente novamente.");
     }
-    router.push("/admin");
   }
 
   if (!token) {
     return (
       <main className="max-w-sm mx-auto px-6 py-20">
-        <p className="text-sm text-red-600">
+        <p className="text-sm text-red-600 mb-4">
           Link inválido. Volte pra tela de entrar e tente "Entrar com Google" de novo.
         </p>
+        <a className="underline text-sm" href="/entrar">← Voltar pra Entrar</a>
       </main>
     );
   }
@@ -55,14 +61,18 @@ function FormularioFinalizar() {
         Sua conta do Google foi confirmada — agora só o nome da sua barbearia.
       </p>
       <form onSubmit={finalizar} className="space-y-4">
-        <input
-          className="input"
-          placeholder="Nome da barbearia"
-          value={nomeBarbearia}
-          onChange={(e) => setNomeBarbearia(e.target.value)}
-          required
-          autoFocus
-        />
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="nomeBarbearia">Nome da barbearia</label>
+          <input
+            id="nomeBarbearia"
+            className="input"
+            placeholder="Nome da barbearia"
+            value={nomeBarbearia}
+            onChange={(e) => { setNomeBarbearia(e.target.value); setErro(""); }}
+            required
+            autoFocus
+          />
+        </div>
         {erro && <p className="text-sm text-red-600">{erro}</p>}
         <button className="btn-primary w-full" disabled={carregando}>
           {carregando ? "Criando..." : "Criar barbearia"}

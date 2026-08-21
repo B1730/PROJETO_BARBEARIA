@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { buscarBarbeariaPublica } from "@/lib/barbearia";
 import PaginaBarbeariaCliente from "./PaginaBarbeariaCliente";
 
@@ -10,7 +11,13 @@ export default async function PaginaBarbearia({ params }: { params: { slug: stri
   const barbearia = await buscarBarbeariaPublica(params.slug);
 
   if (!barbearia) {
-    return <main className="max-w-2xl mx-auto px-6 py-20">Barbearia não encontrada.</main>;
+    return (
+      <main className="max-w-2xl mx-auto px-6 py-20">
+        <h1 className="font-display text-2xl mb-3">Barbearia não encontrada</h1>
+        <p className="text-sm text-ink/60 mb-6">O link que você acessou não corresponde a nenhuma barbearia cadastrada.</p>
+        <Link href="/" className="btn-secondary">← Voltar pro início</Link>
+      </main>
+    );
   }
 
   // Um valor Decimal do Prisma não atravessa a fronteira Server->Client

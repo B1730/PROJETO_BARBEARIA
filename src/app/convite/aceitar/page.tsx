@@ -43,13 +43,18 @@ function FormularioAceitarConvite() {
           setConvite(dados);
         }
         setCarregando(false);
+      })
+      .catch(() => {
+        setErroConvite("Não foi possível conectar. Tente recarregar a página.");
+        setCarregando(false);
       });
     // Se o navegador já tiver uma sessão logada, avisa antes de deixar
     // continuar — confirmar o convite troca pra essa conta nova sem
     // perguntar, e sem esse aviso a pessoa não teria como saber disso.
     fetch("/api/auth/sessao")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.usuario) setSessaoAtual({ nome: d.usuario.nome }); });
+      .then((d) => { if (d?.usuario) setSessaoAtual({ nome: d.usuario.nome }); })
+      .catch(() => {});
   }, [token]);
 
   async function confirmar(e: React.FormEvent) {
@@ -60,18 +65,23 @@ function FormularioAceitarConvite() {
       return;
     }
     setEnviando(true);
-    const resp = await fetch("/api/barbeiros/aceitar-convite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, senha }),
-    });
-    const dados = await resp.json();
-    setEnviando(false);
-    if (!resp.ok) {
-      setErro(dados.erro || "Não foi possível confirmar o convite");
-      return;
+    try {
+      const resp = await fetch("/api/barbeiros/aceitar-convite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, senha }),
+      });
+      const dados = await resp.json();
+      if (!resp.ok) {
+        setEnviando(false);
+        setErro(dados.erro || "Não foi possível confirmar o convite");
+        return;
+      }
+      router.push("/barbeiro");
+    } catch {
+      setEnviando(false);
+      setErro("Não foi possível conectar. Tente novamente.");
     }
-    router.push("/barbeiro");
   }
 
   if (carregando) {
@@ -81,7 +91,8 @@ function FormularioAceitarConvite() {
   if (erroConvite) {
     return (
       <main className="max-w-sm mx-auto px-6 py-20">
-        <p className="text-sm text-red-600">{erroConvite}</p>
+        <p className="text-sm text-red-600 mb-4">{erroConvite}</p>
+        <a className="underline text-sm" href="/entrar">← Voltar pra Entrar</a>
       </main>
     );
   }
@@ -104,24 +115,32 @@ function FormularioAceitarConvite() {
         </p>
       )}
       <form onSubmit={confirmar} className="space-y-4">
-        <input
-          className="input"
-          type="password"
-          placeholder="Crie uma senha"
-          value={senha}
-          onChange={(e) => setSenha(e.target.value)}
-          required
-          minLength={6}
-        />
-        <input
-          className="input"
-          type="password"
-          placeholder="Confirme a senha"
-          value={confirmarSenha}
-          onChange={(e) => setConfirmarSenha(e.target.value)}
-          required
-          minLength={6}
-        />
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="senha">Crie uma senha</label>
+          <input
+            id="senha"
+            className="input"
+            type="password"
+            placeholder="Crie uma senha"
+            value={senha}
+            onChange={(e) => { setSenha(e.target.value); setErro(""); }}
+            required
+            minLength={6}
+          />
+        </div>
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="confirmarSenha">Confirme a senha</label>
+          <input
+            id="confirmarSenha"
+            className="input"
+            type="password"
+            placeholder="Confirme a senha"
+            value={confirmarSenha}
+            onChange={(e) => { setConfirmarSenha(e.target.value); setErro(""); }}
+            required
+            minLength={6}
+          />
+        </div>
         {erro && <p className="text-sm text-red-600">{erro}</p>}
         <button className="btn-primary w-full" disabled={enviando}>
           {enviando ? "Confirmando..." : "Confirmar e entrar"}

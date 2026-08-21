@@ -27,8 +27,10 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
   const [meuWhatsapp, setMeuWhatsapp] = useState("");
   const [mensagem, setMensagem] = useState("");
+  const [mensagemEhErro, setMensagemEhErro] = useState(false);
   const [carregandoHorarios, setCarregandoHorarios] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [saindo, setSaindo] = useState(false);
   const [barbeiroConfirmado, setBarbeiroConfirmado] = useState<{ nome: string; whatsapp: string | null } | null>(null);
 
   useEffect(() => {
@@ -48,8 +50,13 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   }, [sessao]);
 
   async function sair() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setSessao(null);
+    setSaindo(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      setSessao(null);
+    } finally {
+      setSaindo(false);
+    }
   }
 
   // Limpa a mensagem/link de resultado de um pedido anterior sempre que o
@@ -59,6 +66,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   // pedido ser realmente enviado.
   function limparResultadoAnterior() {
     setMensagem("");
+    setMensagemEhErro(false);
     setBarbeiroConfirmado(null);
   }
 
@@ -103,11 +111,13 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
 
   async function confirmarAgendamento() {
     setMensagem("");
+    setMensagemEhErro(false);
     setBarbeiroConfirmado(null);
 
     const whatsappLimpo = meuWhatsapp.replace(/\D/g, "");
     if (whatsappLimpo.length < 8) {
       setMensagem("Informe um número de WhatsApp válido — o barbeiro pode precisar entrar em contato.");
+      setMensagemEhErro(true);
       return;
     }
 
@@ -134,6 +144,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     const dados = await resp.json();
     setEnviando(false);
     if (!resp.ok) {
+      setMensagemEhErro(true);
       if (resp.status === 401) {
         setMensagem("Você precisa criar uma conta ou entrar antes de agendar.");
       } else if (resp.status === 403) {
@@ -164,7 +175,9 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
                   ? `Olá, ${sessao.usuario.nome}`
                   : `Logado como ${sessao.usuario.papel === "DONO" ? "dono" : "barbeiro"} (${sessao.usuario.nome})`}
                 {" · "}
-                <button onClick={sair} className="underline">Sair</button>
+                <button onClick={sair} disabled={saindo} className="underline disabled:opacity-50 disabled:cursor-not-allowed">
+                  {saindo ? "Saindo..." : "Sair"}
+                </button>
               </>
             ) : (
               <>
@@ -189,6 +202,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
             <button
               key={b.id}
               onClick={() => {
+                if (barbeiroEscolhidoId === b.id) return;
                 setBarbeiroEscolhidoId(b.id);
                 setServicosEscolhidos([]);
                 setHoraEscolhida(null);
@@ -262,70 +276,78 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
             onChange={(e) => { setData(e.target.value); setHoraEscolhida(null); limparResultadoAnterior(); }}
           />
           {data && (
-            <div className="flex flex-wrap gap-2">
-              {carregandoHorarios && <p className="text-sm text-ink/50">Carregando horários...</p>}
-              {!carregandoHorarios && horarios.length === 0 && ocupados.length === 0 && (
-                <p className="text-sm text-ink/50">
-                  {semExpediente
-                    ? "Esse profissional não atende nesse dia da semana. Escolha outra data."
-                    : diaEncerrado
-                    ? "O expediente desse dia já encerrou. Escolha outra data."
-                    : "Nenhum horário livre neste dia — todos os horários já foram preenchidos."}
-                </p>
+            <>
+              <div className="flex flex-wrap gap-2">
+                {carregandoHorarios && <p className="text-sm text-ink/50">Carregando horários...</p>}
+                {!carregandoHorarios && horarios.length === 0 && ocupados.length === 0 && (
+                  <p className="text-sm text-ink/50">
+                    {semExpediente
+                      ? "Esse profissional não atende nesse dia da semana. Escolha outra data."
+                      : diaEncerrado
+                      ? "O expediente desse dia já encerrou. Escolha outra data."
+                      : "Nenhum horário livre neste dia — todos os horários já foram preenchidos."}
+                  </p>
+                )}
+                {!carregandoHorarios &&
+                  [...horarios.map((h) => ({ hora: h, livre: true })), ...ocupados.map((h) => ({ hora: h, livre: false }))]
+                    .sort((a, b) => a.hora.localeCompare(b.hora))
+                    .map(({ hora, livre }) =>
+                      livre ? (
+                        <button
+                          key={hora}
+                          onClick={() => { setHoraEscolhida(hora); limparResultadoAnterior(); }}
+                          className={`px-3 py-2 rounded-md border ${horaEscolhida === hora ? "bg-accent text-white border-accent" : "border-line"}`}
+                        >
+                          {hora}
+                        </button>
+                      ) : (
+                        <button
+                          key={hora}
+                          disabled
+                          title="Já tem agendamento nesse horário"
+                          className="px-3 py-2 rounded-md border border-line bg-line/60 text-ink/60 cursor-not-allowed"
+                        >
+                          {hora}
+                        </button>
+                      )
+                    )}
+              </div>
+              {!carregandoHorarios && ocupados.length > 0 && (
+                <p className="text-xs text-ink/50 mt-2">Os horários em cinza já estão ocupados.</p>
               )}
-              {!carregandoHorarios &&
-                [...horarios.map((h) => ({ hora: h, livre: true })), ...ocupados.map((h) => ({ hora: h, livre: false }))]
-                  .sort((a, b) => a.hora.localeCompare(b.hora))
-                  .map(({ hora, livre }) =>
-                    livre ? (
-                      <button
-                        key={hora}
-                        onClick={() => { setHoraEscolhida(hora); limparResultadoAnterior(); }}
-                        className={`px-3 py-2 rounded-md border ${horaEscolhida === hora ? "bg-accent text-white border-accent" : "border-line"}`}
-                      >
-                        {hora}
-                      </button>
-                    ) : (
-                      <button
-                        key={hora}
-                        disabled
-                        title="Já tem agendamento nesse horário"
-                        className="px-3 py-2 rounded-md border border-line bg-line/40 text-ink/30 cursor-not-allowed"
-                      >
-                        {hora}
-                      </button>
-                    )
-                  )}
-            </div>
+            </>
           )}
         </section>
       )}
 
       {horaEscolhida && (
         <section className="card mb-4">
-          <p className="mb-3">
-            Confirmar <strong>{servicosEscolhidos.map((s) => s.nome).join(" + ")}</strong> (R$ {precoTotal.toFixed(2)})
-            em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
-          </p>
-          <label className="block text-sm text-ink/70 mb-1">
-            Seu WhatsApp (com DDD e país) — pra o barbeiro entrar em contato se precisar
-          </label>
-          <input
-            className="input mb-3"
-            placeholder="5511999999999"
-            value={meuWhatsapp}
-            onChange={(e) => setMeuWhatsapp(e.target.value)}
-            required
-          />
-          <button className="btn-primary" disabled={enviando} onClick={confirmarAgendamento}>
-            {enviando ? "Enviando..." : "Solicitar agendamento"}
-          </button>
+          <form onSubmit={(e) => { e.preventDefault(); confirmarAgendamento(); }}>
+            <p className="mb-3">
+              Confirmar <strong>{servicosEscolhidos.map((s) => s.nome).join(" + ")}</strong> (R$ {precoTotal.toFixed(2)})
+              em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
+            </p>
+            <label className="block text-sm text-ink/70 mb-1" htmlFor="meuWhatsapp">
+              Seu WhatsApp (com DDD e país) — pra o barbeiro entrar em contato se precisar
+            </label>
+            <input
+              id="meuWhatsapp"
+              className="input mb-3"
+              placeholder="5511999999999"
+              value={meuWhatsapp}
+              onChange={(e) => { setMeuWhatsapp(e.target.value); limparResultadoAnterior(); }}
+              required
+            />
+            <button type="submit" className="btn-primary" disabled={enviando}>
+              {enviando ? "Enviando..." : "Solicitar agendamento"}
+            </button>
+          </form>
         </section>
       )}
 
       {mensagem && (
         <section className="card">
-          <p className="text-sm">
+          <p className={`text-sm ${mensagemEhErro ? "text-red-600" : "text-green-700"}`}>
             {mensagem}{" "}
             {mensagem.includes("conta") && (
               <>

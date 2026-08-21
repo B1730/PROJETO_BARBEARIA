@@ -92,7 +92,7 @@ export default async function Home() {
           ))}
         </div>
 
-        <p className="text-sm text-ink/50 mt-14">
+        <p className="text-sm text-ink/60 mt-14">
           Já é cliente de uma barbearia cadastrada? Peça o link direto da página dela.
         </p>
       </div>

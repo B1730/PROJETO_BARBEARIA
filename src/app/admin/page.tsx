@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
-
-const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+import PainelDisponibilidade, { Disponibilidade } from "@/components/PainelDisponibilidade";
 
 type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
 type Servico = {
@@ -14,7 +13,6 @@ type Servico = {
   barbeiros: { barbeiroId: string }[];
 };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
-type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type MeuAgendamento = {
   id: string; status: string; data: string;
   cliente: { nome: string; email: string; whatsapp: string | null };
@@ -24,8 +22,14 @@ type MeuAgendamento = {
   ocultoPeloBarbeiro: boolean;
 };
 
+const INTERVALO_POLLING_MS = 8000;
+
 function nomesCortes(ag: MeuAgendamento) {
   return ag.servicos.map((s) => s.nomeServico).join(" + ");
+}
+
+function hojeBrasil() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
 function DetalheCliente({ ag, aberto, onToggle }: { ag: MeuAgendamento; aberto: boolean; onToggle: () => void }) {
@@ -81,6 +85,7 @@ export default function PainelAdmin() {
   const [editServicoDuracao, setEditServicoDuracao] = useState("30");
   const [editServicoImagem, setEditServicoImagem] = useState<File | null>(null);
   const [salvandoEdicaoServico, setSalvandoEdicaoServico] = useState(false);
+  const [removendoServicoId, setRemovendoServicoId] = useState<string | null>(null);
 
   // "Eu também atendo": o dono pode ativar isso pra cortar cabelo também
   // (ver regra de negócio 10) — quando ativo, ganha a própria agenda
@@ -91,10 +96,7 @@ export default function PainelAdmin() {
   const [minhaNovaFoto, setMinhaNovaFoto] = useState<File | null>(null);
   const [alternandoAtendimento, setAlternandoAtendimento] = useState(false);
   const [minhaDisponibilidade, setMinhaDisponibilidade] = useState<Disponibilidade[]>([]);
-  const [novoDia, setNovoDia] = useState(1);
-  const [novaHoraIni, setNovaHoraIni] = useState("09:00");
-  const [novaHoraFim, setNovaHoraFim] = useState("18:00");
-  const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
+  const [meusAgendaHoje, setMeusAgendaHoje] = useState<MeuAgendamento[]>([]);
   const [meusPendentes, setMeusPendentes] = useState<MeuAgendamento[]>([]);
   const [meusPedidosCancelamento, setMeusPedidosCancelamento] = useState<MeuAgendamento[]>([]);
   const [meusAgendados, setMeusAgendados] = useState<MeuAgendamento[]>([]);
@@ -179,6 +181,9 @@ export default function PainelAdmin() {
   useEffect(() => { carregarPerfil(); }, []);
 
   async function alternarAtendimento() {
+    if (atendoComoBarbeiro && !window.confirm("Desativar o atendimento? Sua disponibilidade e pedidos pendentes como barbeiro continuam guardados, mas você deixa de aparecer pro cliente escolher até ativar de novo.")) {
+      return;
+    }
     setErro("");
     setSucesso("");
     setAlternandoAtendimento(true);
@@ -231,14 +236,19 @@ export default function PainelAdmin() {
 
   async function carregarMinhaAgenda() {
     const sufixoOcultos = mostrandoOcultos ? "&mostrarOcultos=1" : "";
-    const [dispResp, pendResp, confResp, concResp, cancResp] = await Promise.all([
+    const [dispResp, hojeResp, pendResp, confResp, concResp, cancResp] = await Promise.all([
       fetch("/api/disponibilidade"),
+      fetch(`/api/agendamentos?data=${hojeBrasil()}`),
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch("/api/agendamentos?status=CONFIRMADO"),
       fetch(`/api/agendamentos?status=CONCLUIDO${sufixoOcultos}`),
       fetch(`/api/agendamentos?status=CANCELADO${sufixoOcultos}`),
     ]);
     if (dispResp.ok) setMinhaDisponibilidade((await dispResp.json()).disponibilidades || []);
+    if (hojeResp.ok) {
+      const hoje = await hojeResp.json();
+      setMeusAgendaHoje((hoje.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId));
+    }
     if (pendResp.ok && confResp.ok) {
       const [pend, conf] = await Promise.all([pendResp.json(), confResp.json()]);
       const pendentesLista: MeuAgendamento[] = (pend.agendamentos || []).filter((ag: MeuAgendamento) => ag.barbeiro?.id === meuId);
@@ -268,37 +278,18 @@ export default function PainelAdmin() {
     if (atendoComoBarbeiro && meuId) carregarMinhaAgenda();
   }, [atendoComoBarbeiro, meuId, mostrandoOcultos]);
 
-  async function adicionarMinhaDisponibilidade(e: React.FormEvent) {
-    e.preventDefault();
-    setErro("");
-    setSalvandoDisponibilidade(true);
-    const resp = await fetch("/api/disponibilidade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ diaDaSemana: novoDia, horaInicio: novaHoraIni, horaFim: novaHoraFim }),
-    });
-    setSalvandoDisponibilidade(false);
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível adicionar essa disponibilidade");
-      return;
-    }
-    carregarMinhaAgenda();
-  }
-
-  async function removerMinhaDisponibilidade(id: string) {
-    setErro("");
-    const resp = await fetch(`/api/disponibilidade/${id}`, { method: "DELETE" });
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível remover essa disponibilidade");
-      return;
-    }
-    carregarMinhaAgenda();
-  }
+  // Igual ao polling de barbeiro/page.tsx (mesmo INTERVALO_POLLING_MS) — sem
+  // isso, um pedido novo de cliente só aparecia depois de um F5 manual,
+  // diferente do painel do barbeiro, que já atualiza sozinho a cada 8s.
+  useEffect(() => {
+    if (!atendoComoBarbeiro || !meuId) return;
+    const intervalo = setInterval(() => carregarMinhaAgenda(), INTERVALO_POLLING_MS);
+    return () => clearInterval(intervalo);
+  }, [atendoComoBarbeiro, meuId, mostrandoOcultos]);
 
   async function responderMeuPedido(id: string, status: "CONFIRMADO" | "RECUSADO") {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -319,6 +310,7 @@ export default function PainelAdmin() {
   // livre pra outro cliente.
   async function concluirMeuCorte(id: string) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -338,6 +330,7 @@ export default function PainelAdmin() {
   // banco) — ou desfaz isso quando "Mostrar ocultos" está ligado.
   async function ocultarMeuCorte(id: string, valor: boolean) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -355,6 +348,7 @@ export default function PainelAdmin() {
 
   async function decidirMeuCancelamento(id: string, confirmar: boolean) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -392,6 +386,7 @@ export default function PainelAdmin() {
   }
 
   async function alternarChefe(b: Barbeiro) {
+    if (b.ehChefe && !window.confirm(`Remover ${b.nome} como chefe?`)) return;
     setErro("");
     setSucesso("");
     setAlternandoChefeId(b.id);
@@ -449,8 +444,12 @@ export default function PainelAdmin() {
   }
 
   async function removerServico(id: string) {
+    if (!window.confirm("Excluir esse corte? Isso pode afetar agendamentos futuros que já usam ele.")) return;
     setErro("");
+    setSucesso("");
+    setRemovendoServicoId(id);
     const resp = await fetch(`/api/servicos/${id}`, { method: "DELETE" });
+    setRemovendoServicoId(null);
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível excluir esse corte");
@@ -470,6 +469,8 @@ export default function PainelAdmin() {
   }
 
   function cancelarEdicaoServico() {
+    setErro("");
+    setSucesso("");
     setEditandoServicoId(null);
   }
 
@@ -510,15 +511,6 @@ export default function PainelAdmin() {
     carregarBarbeirosEServicos(false);
   }
 
-  if (carregando) {
-    return (
-      <>
-        <Cabecalho />
-        <main className="max-w-2xl mx-auto px-6 py-20">Carregando...</main>
-      </>
-    );
-  }
-
   return (
     <>
       <Cabecalho />
@@ -529,6 +521,11 @@ export default function PainelAdmin() {
           Visualizar dados da barbearia
         </Link>
       </div>
+
+      {carregando ? (
+        <p className="text-ink/60">Carregando...</p>
+      ) : (
+        <>
       {erro && <p className="text-sm text-red-600">{erro}</p>}
       {sucesso && <p className="text-sm text-green-600">{sucesso}</p>}
 
@@ -572,7 +569,7 @@ export default function PainelAdmin() {
                 disabled={alternandoChefeId === b.id}
                 onClick={() => alternarChefe(b)}
               >
-                {alternandoChefeId === b.id ? "..." : b.ehChefe ? "Remover como chefe" : "Tornar chefe"}
+                {alternandoChefeId === b.id ? "Atualizando..." : b.ehChefe ? "Remover como chefe" : "Tornar chefe"}
               </button>
             </div>
           ))}
@@ -628,7 +625,13 @@ export default function PainelAdmin() {
                   <div className="flex items-center gap-3">
                     <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
                     <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoServico(s)}>Editar</button>
-                    <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+                    <button
+                      className="text-sm text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={removendoServicoId === s.id}
+                      onClick={() => removerServico(s.id)}
+                    >
+                      {removendoServicoId === s.id ? "Excluindo..." : "Excluir"}
+                    </button>
                   </div>
                 </div>
               )}
@@ -658,7 +661,7 @@ export default function PainelAdmin() {
         <div className="flex justify-between items-center mb-3">
           <h2 className="font-medium">Eu também atendo</h2>
           <button className="text-sm text-ink/60 hover:text-ink" disabled={alternandoAtendimento} onClick={alternarAtendimento}>
-            {alternandoAtendimento ? "..." : atendoComoBarbeiro ? "Desativar atendimento" : "Ativar atendimento"}
+            {alternandoAtendimento ? "Atualizando..." : atendoComoBarbeiro ? "Desativar atendimento" : "Ativar atendimento"}
           </button>
         </div>
         <p className="text-sm text-ink/50 mb-3">
@@ -679,7 +682,9 @@ export default function PainelAdmin() {
                     <Image src={meuFotoUrl} alt="Sua foto" width={64} height={64} className="h-16 w-16 rounded-full object-cover" />
                   )}
                   <div className="flex-1">
+                    <label className="text-sm text-ink/60 mb-1 block" htmlFor="minhaFoto">Foto de perfil (opcional)</label>
                     <input
+                      id="minhaFoto"
                       className="input"
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
@@ -696,18 +701,26 @@ export default function PainelAdmin() {
                     <br />3. Ele responde com sua chave (apikey) pessoal — cole ela abaixo, junto com o seu número.
                   </p>
                   <div className="grid gap-2">
-                    <input
-                      className="input"
-                      placeholder="Seu WhatsApp (com DDD e país, só números)"
-                      value={meuWhatsapp}
-                      onChange={(e) => setMeuWhatsapp(e.target.value)}
-                    />
-                    <input
-                      className="input"
-                      placeholder="Apikey do CallMeBot"
-                      value={meuCallmebotApiKey}
-                      onChange={(e) => setMeuCallmebotApiKey(e.target.value)}
-                    />
+                    <div>
+                      <label className="text-sm text-ink/60 mb-1 block" htmlFor="meuWhatsapp">Seu WhatsApp</label>
+                      <input
+                        id="meuWhatsapp"
+                        className="input"
+                        placeholder="Seu WhatsApp (com DDD e país, só números)"
+                        value={meuWhatsapp}
+                        onChange={(e) => setMeuWhatsapp(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-ink/60 mb-1 block" htmlFor="meuCallmebotApiKey">Apikey do CallMeBot</label>
+                      <input
+                        id="meuCallmebotApiKey"
+                        className="input"
+                        placeholder="Apikey do CallMeBot"
+                        value={meuCallmebotApiKey}
+                        onChange={(e) => setMeuCallmebotApiKey(e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -715,6 +728,35 @@ export default function PainelAdmin() {
                   {salvandoContato ? "Salvando..." : "Salvar"}
                 </button>
               </form>
+            </div>
+
+            <div className="mb-4">
+              <h3 className="text-sm font-medium text-ink/70 mb-2">Agendamentos de hoje</h3>
+              {meusAgendaHoje.length === 0 && <p className="text-sm text-ink/50">Nada marcado pra hoje.</p>}
+              <div className="space-y-2">
+                {meusAgendaHoje.map((ag) => (
+                  <div key={ag.id} className="card flex justify-between items-center">
+                    <div>
+                      <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                      <p className="text-sm text-ink/60">
+                        {new Date(ag.data).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
+                        {" · "}{ag.status}
+                      </p>
+                      <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
+                    </div>
+                    {ag.status === "PENDENTE" && (
+                      <div className="flex gap-2">
+                        <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "CONFIRMADO")}>
+                          {respondendoId === ag.id ? "Aceitando..." : "Aceitar"}
+                        </button>
+                        <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "RECUSADO")}>
+                          {respondendoId === ag.id ? "Recusando..." : "Recusar"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {meusPedidosCancelamento.length > 0 && (
@@ -730,10 +772,10 @@ export default function PainelAdmin() {
                     <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                     <div className="flex gap-2 mt-3">
                       <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirMeuCancelamento(ag.id, true)}>
-                        {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
+                        {respondendoId === ag.id ? "Confirmando..." : "Confirmar cancelamento"}
                       </button>
                       <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => decidirMeuCancelamento(ag.id, false)}>
-                        {respondendoId === ag.id ? "..." : "Manter agendamento"}
+                        {respondendoId === ag.id ? "Mantendo..." : "Manter agendamento"}
                       </button>
                     </div>
                   </div>
@@ -755,10 +797,10 @@ export default function PainelAdmin() {
                   </div>
                   <div className="flex gap-2">
                     <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "CONFIRMADO")}>
-                      {respondendoId === ag.id ? "..." : "Aceitar"}
+                      {respondendoId === ag.id ? "Aceitando..." : "Aceitar"}
                     </button>
                     <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => responderMeuPedido(ag.id, "RECUSADO")}>
-                      {respondendoId === ag.id ? "..." : "Recusar"}
+                      {respondendoId === ag.id ? "Recusando..." : "Recusar"}
                     </button>
                   </div>
                 </div>
@@ -778,7 +820,7 @@ export default function PainelAdmin() {
                     <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                   </div>
                   <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => concluirMeuCorte(ag.id)}>
-                    {respondendoId === ag.id ? "..." : "Marcar concluído"}
+                    {respondendoId === ag.id ? "Concluindo..." : "Marcar concluído"}
                   </button>
                 </div>
               ))}
@@ -812,7 +854,9 @@ export default function PainelAdmin() {
                     onClick={() => ocultarMeuCorte(ag.id, !ag.ocultoPeloBarbeiro)}
                     title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
                   >
-                    {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                    {respondendoId === ag.id
+                      ? ag.ocultoPeloBarbeiro ? "Mostrando..." : "Ocultando..."
+                      : ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar"}
                   </button>
                 </div>
               ))}
@@ -836,36 +880,28 @@ export default function PainelAdmin() {
                     onClick={() => ocultarMeuCorte(ag.id, !ag.ocultoPeloBarbeiro)}
                     title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
                   >
-                    {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                    {respondendoId === ag.id
+                      ? ag.ocultoPeloBarbeiro ? "Mostrando..." : "Ocultando..."
+                      : ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar"}
                   </button>
                 </div>
               ))}
             </div>
 
             <h3 className="text-sm font-medium text-ink/70 mb-2">Minha disponibilidade</h3>
-            <div className="space-y-2 mb-4">
-              {minhaDisponibilidade.map((d) => (
-                <div key={d.id} className="card flex justify-between items-center">
-                  <span>{DIAS[d.diaDaSemana]}: {d.horaInicio} às {d.horaFim}</span>
-                  <button className="text-sm text-red-600" onClick={() => removerMinhaDisponibilidade(d.id)}>Remover</button>
-                </div>
-              ))}
-            </div>
-            <form onSubmit={adicionarMinhaDisponibilidade} className="card flex flex-wrap gap-2 items-end">
-              <select className="input" value={novoDia} onChange={(e) => setNovoDia(Number(e.target.value))}>
-                {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-              </select>
-              <input type="time" step={1800} className="input" value={novaHoraIni} onChange={(e) => setNovaHoraIni(e.target.value)} />
-              <input type="time" step={1800} className="input" value={novaHoraFim} onChange={(e) => setNovaHoraFim(e.target.value)} />
-              <button className="btn-primary" disabled={salvandoDisponibilidade}>
-                {salvandoDisponibilidade ? "Adicionando..." : "Adicionar"}
-              </button>
-            </form>
+            <PainelDisponibilidade
+              disponibilidades={minhaDisponibilidade}
+              recarregar={carregarMinhaAgenda}
+              onErro={setErro}
+              onSucesso={setSucesso}
+            />
             {erro && <p className="text-sm text-red-600 mt-2">{erro}</p>}
             {sucesso && <p className="text-sm text-green-600 mt-2">{sucesso}</p>}
           </>
         )}
       </section>
+        </>
+      )}
       </main>
     </>
   );

@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
+import PainelDisponibilidade, { Disponibilidade } from "@/components/PainelDisponibilidade";
 
-const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 const ROTULO_STATUS: Record<string, string> = {
   PENDENTE: "Aguardando",
   CONFIRMADO: "Confirmado",
@@ -15,10 +15,10 @@ const ROTULO_STATUS: Record<string, string> = {
   CONCLUIDO: "Concluído",
 };
 const COR_STATUS: Record<string, string> = {
-  PENDENTE: "text-amber-600",
-  CONFIRMADO: "text-green-600",
+  PENDENTE: "text-amber-700",
+  CONFIRMADO: "text-green-700",
   RECUSADO: "text-red-600",
-  CANCELADO: "text-ink/40",
+  CANCELADO: "text-ink/60",
   CONCLUIDO: "text-ink/60",
 };
 const INTERVALO_POLLING_MS = 8000;
@@ -42,7 +42,6 @@ type Agendamento = {
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
   ocultoPeloBarbeiro: boolean;
 };
-type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type Servico = {
   id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
   barbeiros: { barbeiroId: string; preco: string }[];
@@ -99,17 +98,6 @@ export default function PainelBarbeiro() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
-  const [novoDia, setNovoDia] = useState(1);
-  const [novaHoraIni, setNovaHoraIni] = useState("09:00");
-  const [novaHoraFim, setNovaHoraFim] = useState("18:00");
-  const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
-  const [editandoDisponibilidadeId, setEditandoDisponibilidadeId] = useState<string | null>(null);
-  const [editHoraIni, setEditHoraIni] = useState("09:00");
-  const [editHoraFim, setEditHoraFim] = useState("18:00");
-  const [salvandoEdicaoDisponibilidade, setSalvandoEdicaoDisponibilidade] = useState(false);
-  const [diaReplicando, setDiaReplicando] = useState<number | null>(null);
-  const [diasDestinoReplicar, setDiasDestinoReplicar] = useState<Set<number>>(new Set());
-  const [salvandoReplicar, setSalvandoReplicar] = useState(false);
   const [novoServicoNome, setNovoServicoNome] = useState("");
   const [novoServicoPreco, setNovoServicoPreco] = useState("");
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
@@ -121,6 +109,7 @@ export default function PainelBarbeiro() {
   const [editServicoDuracao, setEditServicoDuracao] = useState("30");
   const [editServicoImagem, setEditServicoImagem] = useState<File | null>(null);
   const [salvandoEdicaoServico, setSalvandoEdicaoServico] = useState(false);
+  const [removendoServicoId, setRemovendoServicoId] = useState<string | null>(null);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
   const [detalhesExpandidos, setDetalhesExpandidos] = useState<Set<string>>(new Set());
   function alternarDetalhe(id: string) {
@@ -346,6 +335,7 @@ export default function PainelBarbeiro() {
 
   async function responder(id: string, status: "CONFIRMADO" | "RECUSADO") {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -368,6 +358,7 @@ export default function PainelBarbeiro() {
   // como ocupado em calcularHorariosLivres).
   async function concluir(id: string) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -387,6 +378,7 @@ export default function PainelBarbeiro() {
   // banco) — ou desfaz isso quando "Mostrar ocultos" está ligado.
   async function ocultar(id: string, valor: boolean) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -408,6 +400,7 @@ export default function PainelBarbeiro() {
   // com o cliente pra entender o motivo.
   async function decidirCancelamento(id: string, confirmar: boolean) {
     setErro("");
+    setSucesso("");
     setRespondendoId(id);
     const resp = await fetch(`/api/agendamentos/${id}`, {
       method: "PATCH",
@@ -421,105 +414,6 @@ export default function PainelBarbeiro() {
       return;
     }
     carregarAgendamentos(false);
-  }
-
-  async function adicionarDisponibilidade(e: React.FormEvent) {
-    e.preventDefault();
-    setErro("");
-    setSalvandoDisponibilidade(true);
-    const resp = await fetch("/api/disponibilidade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ diaDaSemana: novoDia, horaInicio: novaHoraIni, horaFim: novaHoraFim }),
-    });
-    setSalvandoDisponibilidade(false);
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível adicionar essa disponibilidade");
-      return;
-    }
-    carregarDadosEstaveis();
-  }
-
-  async function removerDisponibilidade(id: string) {
-    setErro("");
-    const resp = await fetch(`/api/disponibilidade/${id}`, { method: "DELETE" });
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível remover essa disponibilidade");
-      return;
-    }
-    carregarDadosEstaveis();
-  }
-
-  function iniciarEdicaoDisponibilidade(d: Disponibilidade) {
-    setErro("");
-    setEditandoDisponibilidadeId(d.id);
-    setEditHoraIni(d.horaInicio);
-    setEditHoraFim(d.horaFim);
-  }
-
-  function cancelarEdicaoDisponibilidade() {
-    setEditandoDisponibilidadeId(null);
-  }
-
-  async function salvarEdicaoDisponibilidade(id: string, diaDaSemana: number) {
-    setErro("");
-    setSalvandoEdicaoDisponibilidade(true);
-    const resp = await fetch(`/api/disponibilidade/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ diaDaSemana, horaInicio: editHoraIni, horaFim: editHoraFim }),
-    });
-    setSalvandoEdicaoDisponibilidade(false);
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível salvar essa edição");
-      return;
-    }
-    setEditandoDisponibilidadeId(null);
-    carregarDadosEstaveis();
-  }
-
-  function abrirReplicar(dia: number) {
-    setErro("");
-    setSucesso("");
-    setDiaReplicando(diaReplicando === dia ? null : dia);
-    setDiasDestinoReplicar(new Set());
-  }
-
-  function alternarDiaDestino(dia: number) {
-    setDiasDestinoReplicar((prev) => {
-      const novo = new Set(prev);
-      if (novo.has(dia)) novo.delete(dia);
-      else novo.add(dia);
-      return novo;
-    });
-  }
-
-  async function replicarDisponibilidade(diaOrigem: number) {
-    setErro("");
-    setSucesso("");
-    setSalvandoReplicar(true);
-    const resp = await fetch("/api/disponibilidade/replicar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ diaOrigem, diasDestino: [...diasDestinoReplicar] }),
-    });
-    setSalvandoReplicar(false);
-    if (!resp.ok) {
-      const dados = await resp.json().catch(() => ({}));
-      setErro(dados.erro || "Não foi possível replicar essa disponibilidade");
-      return;
-    }
-    const dados = await resp.json();
-    setSucesso(
-      dados.criadas > 0
-        ? `${dados.criadas} janela(s) adicionada(s).`
-        : "Os dias escolhidos já tinham essas janelas — nada novo pra adicionar."
-    );
-    setDiaReplicando(null);
-    carregarDadosEstaveis();
   }
 
   async function adicionarServico(e: React.FormEvent) {
@@ -561,8 +455,12 @@ export default function PainelBarbeiro() {
   }
 
   async function removerServico(id: string) {
+    if (!window.confirm("Excluir esse corte? Isso pode afetar agendamentos futuros que já usam ele.")) return;
     setErro("");
+    setSucesso("");
+    setRemovendoServicoId(id);
     const resp = await fetch(`/api/servicos/${id}`, { method: "DELETE" });
+    setRemovendoServicoId(null);
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível excluir esse corte");
@@ -582,6 +480,8 @@ export default function PainelBarbeiro() {
   }
 
   function cancelarEdicaoServico() {
+    setErro("");
+    setSucesso("");
     setEditandoServicoId(null);
   }
 
@@ -622,15 +522,6 @@ export default function PainelBarbeiro() {
     carregarDadosEstaveis();
   }
 
-  if (carregando) {
-    return (
-      <>
-        <Cabecalho />
-        <main className="max-w-2xl mx-auto px-6 py-20 text-ink/60">Carregando painel...</main>
-      </>
-    );
-  }
-
   return (
     <>
       <Cabecalho />
@@ -641,6 +532,11 @@ export default function PainelBarbeiro() {
           Visualizar dados da barbearia
         </Link>
       </div>
+
+      {carregando ? (
+        <p className="text-ink/60">Carregando painel...</p>
+      ) : (
+        <>
       {erro && <p className="text-sm text-red-600">{erro}</p>}
       {sucesso && <p className="text-sm text-green-600">{sucesso}</p>}
 
@@ -660,9 +556,9 @@ export default function PainelBarbeiro() {
         {agendaHoje.length === 0 && <p className="text-sm text-ink/50">Nada marcado pra hoje.</p>}
         <div className="space-y-3">
           {agendaHoje.map((ag) => (
-            <div key={ag.id} className="card flex justify-between items-center">
-              <div>
-                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+            <div key={ag.id} className="card flex justify-between items-center gap-3">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                 <p className="text-sm text-ink/60">
                   {new Date(ag.data).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
                   {" · "}
@@ -671,12 +567,12 @@ export default function PainelBarbeiro() {
                 <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
               </div>
               {ag.status === "PENDENTE" && (
-                <div className="flex gap-2">
+                <div className="flex gap-2 shrink-0">
                   <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responder(ag.id, "CONFIRMADO")}>
-                    {respondendoId === ag.id ? "..." : "Aceitar"}
+                    {respondendoId === ag.id ? "Aceitando..." : "Aceitar"}
                   </button>
                   <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => responder(ag.id, "RECUSADO")}>
-                    {respondendoId === ag.id ? "..." : "Recusar"}
+                    {respondendoId === ag.id ? "Recusando..." : "Recusar"}
                   </button>
                 </div>
               )}
@@ -693,17 +589,17 @@ export default function PainelBarbeiro() {
         ) : (
           <div className="space-y-3">
             {cortesAgendados.map((ag) => (
-              <div key={ag.id} className="card flex justify-between items-center">
-                <div>
-                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+              <div key={ag.id} className="card flex justify-between items-center gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                   <p className="text-sm text-ink/60">
                     {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                     {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
                   </p>
                   <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                 </div>
-                <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => concluir(ag.id)}>
-                  {respondendoId === ag.id ? "..." : "Marcar concluído"}
+                <button className="btn-secondary shrink-0" disabled={respondendoId === ag.id} onClick={() => concluir(ag.id)}>
+                  {respondendoId === ag.id ? "Concluindo..." : "Marcar concluído"}
                 </button>
               </div>
             ))}
@@ -743,7 +639,9 @@ export default function PainelBarbeiro() {
                   onClick={() => ocultar(ag.id, !ag.ocultoPeloBarbeiro)}
                   title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
                 >
-                  {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                  {respondendoId === ag.id
+                    ? ag.ocultoPeloBarbeiro ? "Mostrando..." : "Ocultando..."
+                    : ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar"}
                 </button>
               </div>
             ))}
@@ -772,7 +670,9 @@ export default function PainelBarbeiro() {
                   onClick={() => ocultar(ag.id, !ag.ocultoPeloBarbeiro)}
                   title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
                 >
-                  {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                  {respondendoId === ag.id
+                    ? ag.ocultoPeloBarbeiro ? "Mostrando..." : "Ocultando..."
+                    : ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar"}
                 </button>
               </div>
             ))}
@@ -785,20 +685,20 @@ export default function PainelBarbeiro() {
         {pendentes.length === 0 && <p className="text-sm text-ink/50">Nenhum pedido pendente.</p>}
         <div className="space-y-3">
           {pendentes.map((ag) => (
-            <div key={ag.id} className="card flex justify-between items-center">
-              <div>
-                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+            <div key={ag.id} className="card flex justify-between items-center gap-3">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{ag.cliente.nome} — {nomesCortes(ag)}</p>
                 <p className="text-sm text-ink/60">
                   {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                 </p>
                 <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => responder(ag.id, "CONFIRMADO")}>
-                  {respondendoId === ag.id ? "..." : "Aceitar"}
+                  {respondendoId === ag.id ? "Aceitando..." : "Aceitar"}
                 </button>
                 <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => responder(ag.id, "RECUSADO")}>
-                  {respondendoId === ag.id ? "..." : "Recusar"}
+                  {respondendoId === ag.id ? "Recusando..." : "Recusar"}
                 </button>
               </div>
             </div>
@@ -825,10 +725,10 @@ export default function PainelBarbeiro() {
                 <DetalheCliente ag={ag} aberto={detalhesExpandidos.has(ag.id)} onToggle={() => alternarDetalhe(ag.id)} />
                 <div className="flex gap-2 mt-3">
                   <button className="btn-primary" disabled={respondendoId === ag.id} onClick={() => decidirCancelamento(ag.id, true)}>
-                    {respondendoId === ag.id ? "..." : "Confirmar cancelamento"}
+                    {respondendoId === ag.id ? "Confirmando..." : "Confirmar cancelamento"}
                   </button>
                   <button className="btn-secondary" disabled={respondendoId === ag.id} onClick={() => decidirCancelamento(ag.id, false)}>
-                    {respondendoId === ag.id ? "..." : "Manter agendamento"}
+                    {respondendoId === ag.id ? "Mantendo..." : "Manter agendamento"}
                   </button>
                 </div>
               </div>
@@ -839,77 +739,12 @@ export default function PainelBarbeiro() {
 
       <section>
         <h2 className="font-medium mb-3">Minha disponibilidade</h2>
-        <div className="space-y-4 mb-4">
-          {[...new Set(disponibilidades.map((d) => d.diaDaSemana))].sort((a, b) => a - b).length === 0 && (
-            <p className="text-sm text-ink/50">Nenhuma disponibilidade cadastrada ainda.</p>
-          )}
-          {[...new Set(disponibilidades.map((d) => d.diaDaSemana))].sort((a, b) => a - b).map((dia) => (
-            <div key={dia}>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-sm font-medium text-ink/70">{DIAS[dia]}</span>
-                <button className="text-xs underline text-ink/50" onClick={() => abrirReplicar(dia)}>
-                  {diaReplicando === dia ? "Cancelar" : "Replicar pra outros dias"}
-                </button>
-              </div>
-              <div className="space-y-2">
-                {disponibilidades.filter((d) => d.diaDaSemana === dia).map((d) => (
-                  <div key={d.id} className="card">
-                    {editandoDisponibilidadeId === d.id ? (
-                      <div className="flex flex-wrap gap-2 items-end">
-                        <input type="time" step={1800} className="input" value={editHoraIni} onChange={(e) => setEditHoraIni(e.target.value)} />
-                        <input type="time" step={1800} className="input" value={editHoraFim} onChange={(e) => setEditHoraFim(e.target.value)} />
-                        <button className="btn-primary" disabled={salvandoEdicaoDisponibilidade} onClick={() => salvarEdicaoDisponibilidade(d.id, dia)}>
-                          {salvandoEdicaoDisponibilidade ? "Salvando..." : "Salvar"}
-                        </button>
-                        <button className="btn-secondary" disabled={salvandoEdicaoDisponibilidade} onClick={cancelarEdicaoDisponibilidade}>
-                          Cancelar
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between items-center">
-                        <span>{d.horaInicio} às {d.horaFim}</span>
-                        <div className="flex gap-3">
-                          <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoDisponibilidade(d)}>Editar</button>
-                          <button className="text-sm text-red-600" onClick={() => removerDisponibilidade(d.id)}>Remover</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {diaReplicando === dia && (
-                <div className="card mt-2 space-y-2">
-                  <p className="text-xs text-ink/60">Copiar as janelas de {DIAS[dia]} pra quais dias?</p>
-                  <div className="flex flex-wrap gap-3">
-                    {DIAS.map((nomeDia, i) => i !== dia && (
-                      <label key={i} className="flex items-center gap-1 text-sm">
-                        <input type="checkbox" checked={diasDestinoReplicar.has(i)} onChange={() => alternarDiaDestino(i)} />
-                        {nomeDia}
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    className="btn-primary text-sm"
-                    disabled={salvandoReplicar || diasDestinoReplicar.size === 0}
-                    onClick={() => replicarDisponibilidade(dia)}
-                  >
-                    {salvandoReplicar ? "Replicando..." : "Replicar"}
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <form onSubmit={adicionarDisponibilidade} className="card flex flex-wrap gap-2 items-end">
-          <select className="input" value={novoDia} onChange={(e) => setNovoDia(Number(e.target.value))}>
-            {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-          </select>
-          <input type="time" step={1800} className="input" value={novaHoraIni} onChange={(e) => setNovaHoraIni(e.target.value)} />
-          <input type="time" step={1800} className="input" value={novaHoraFim} onChange={(e) => setNovaHoraFim(e.target.value)} />
-          <button className="btn-primary" disabled={salvandoDisponibilidade}>
-            {salvandoDisponibilidade ? "Adicionando..." : "Adicionar"}
-          </button>
-        </form>
+        <PainelDisponibilidade
+          disponibilidades={disponibilidades}
+          recarregar={carregarDadosEstaveis}
+          onErro={setErro}
+          onSucesso={setSucesso}
+        />
         {/* Mensagem repetida aqui (além do topo da página) — sem isso, um
             erro como "Você já tem esse horário cadastrado nesse dia" aparecia
             só lá em cima, longe dessa seção, e passava despercebido. */}
@@ -960,12 +795,18 @@ export default function PainelBarbeiro() {
                         )}
                         <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 shrink-0">
                         <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
                         {ehMeuExclusivo && (
                           <>
                             <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoServico(s)}>Editar</button>
-                            <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+                            <button
+                              className="text-sm text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={removendoServicoId === s.id}
+                              onClick={() => removerServico(s.id)}
+                            >
+                              {removendoServicoId === s.id ? "Excluindo..." : "Excluir"}
+                            </button>
                           </>
                         )}
                       </div>
@@ -989,7 +830,7 @@ export default function PainelBarbeiro() {
             />
           </div>
           <button className="btn-primary" disabled={salvandoServico}>
-            {salvandoServico ? "Cadastrando..." : "Cadastrar corte"}
+            {salvandoServico ? "Adicionando..." : "Adicionar corte"}
           </button>
         </form>
         {/* Mesma repetição da mensagem de cima — evita "não está funcionando"
@@ -1100,6 +941,8 @@ export default function PainelBarbeiro() {
             </button>
           </form>
         </section>
+      )}
+        </>
       )}
       </main>
     </>

@@ -35,31 +35,47 @@ function FormularioCadastro() {
     e.preventDefault();
     setErro("");
     setCarregando(true);
-    const resp = await fetch("/api/auth/cadastro", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nome, email, senha, papel,
-        nomeBarbearia: papel === "DONO" ? nomeBarbearia : undefined,
-        whatsapp: papel === "CLIENTE" ? whatsapp : undefined,
-      }),
-    });
-    const dados = await resp.json();
-    setCarregando(false);
-    if (!resp.ok) {
-      setErro(dados.erro || "Não foi possível cadastrar");
-      return;
+    try {
+      const resp = await fetch("/api/auth/cadastro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome, email, senha, papel,
+          nomeBarbearia: papel === "DONO" ? nomeBarbearia : undefined,
+          whatsapp: papel === "CLIENTE" ? whatsapp : undefined,
+        }),
+      });
+      const dados = await resp.json();
+      if (!resp.ok) {
+        setCarregando(false);
+        setErro(dados.erro || "Não foi possível cadastrar");
+        return;
+      }
+      router.push(papel === "DONO" ? "/admin" : next || "/");
+    } catch {
+      setCarregando(false);
+      setErro("Não foi possível conectar. Tente novamente.");
     }
-    router.push(papel === "DONO" ? "/admin" : next || "/");
   }
 
   return (
     <main className="max-w-sm mx-auto px-6 py-20">
       <h1 className="font-display text-2xl mb-2">{papel === "DONO" ? "Cadastrar barbearia" : "Criar sua conta"}</h1>
-      <p className="text-sm text-ink/60 mb-6">
+      <p className="text-sm text-ink/60 mb-2">
         {papel === "DONO"
           ? "Você vira o dono/administrador — depois adiciona barbeiros por dentro do painel."
           : "Com sua conta você consegue solicitar agendamentos nas barbearias."}
+      </p>
+      <p className="text-sm text-ink/60 mb-6">
+        {papel === "DONO" ? (
+          <>Só quer agendar um corte?{" "}
+            <a className="underline" href={`/cadastro?papel=CLIENTE${next ? `&next=${encodeURIComponent(next)}` : ""}`}>Criar conta de cliente</a>
+          </>
+        ) : (
+          <>Tem uma barbearia?{" "}
+            <a className="underline" href={`/cadastro${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Cadastrar minha barbearia</a>
+          </>
+        )}
       </p>
       <a
         href={`/api/auth/google?intent=${papel}${next ? `&next=${encodeURIComponent(next)}` : ""}`}
@@ -69,23 +85,39 @@ function FormularioCadastro() {
       </a>
       <div className="flex items-center gap-3 mb-6">
         <div className="h-px flex-1 bg-line" />
-        <span className="text-xs text-ink/40">ou preencha os dados</span>
+        <span className="text-xs text-ink/60">ou preencha os dados</span>
         <div className="h-px flex-1 bg-line" />
       </div>
       <form onSubmit={cadastrar} className="space-y-4">
         {papel === "DONO" && (
-          <input className="input" placeholder="Nome da barbearia" value={nomeBarbearia} onChange={(e) => setNomeBarbearia(e.target.value)} required />
+          <div>
+            <label className="text-sm text-ink/60 mb-1 block" htmlFor="nomeBarbearia">Nome da barbearia</label>
+            <input id="nomeBarbearia" className="input" placeholder="Nome da barbearia" value={nomeBarbearia} onChange={(e) => { setNomeBarbearia(e.target.value); setErro(""); }} required />
+          </div>
         )}
-        <input className="input" placeholder="Seu nome" value={nome} onChange={(e) => setNome(e.target.value)} required />
-        <input className="input" type="email" placeholder="Seu e-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input className="input" type="password" placeholder="Crie uma senha" value={senha} onChange={(e) => setSenha(e.target.value)} required minLength={6} />
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="nome">Seu nome</label>
+          <input id="nome" className="input" placeholder="Seu nome" value={nome} onChange={(e) => { setNome(e.target.value); setErro(""); }} required />
+        </div>
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="email">Seu e-mail</label>
+          <input id="email" className="input" type="email" placeholder="Seu e-mail" value={email} onChange={(e) => { setEmail(e.target.value); setErro(""); }} required />
+        </div>
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="senha">Crie uma senha</label>
+          <input id="senha" className="input" type="password" placeholder="Crie uma senha" value={senha} onChange={(e) => { setSenha(e.target.value); setErro(""); }} required minLength={6} />
+        </div>
         {papel === "CLIENTE" && (
-          <input
-            className="input"
-            placeholder="Seu WhatsApp (opcional, com DDD e país)"
-            value={whatsapp}
-            onChange={(e) => setWhatsapp(e.target.value)}
-          />
+          <div>
+            <label className="text-sm text-ink/60 mb-1 block" htmlFor="whatsapp">Seu WhatsApp (opcional)</label>
+            <input
+              id="whatsapp"
+              className="input"
+              placeholder="Seu WhatsApp (opcional, com DDD e país)"
+              value={whatsapp}
+              onChange={(e) => { setWhatsapp(e.target.value); setErro(""); }}
+            />
+          </div>
         )}
         {erro && <p className="text-sm text-red-600">{erro}</p>}
         <button className="btn-primary w-full" disabled={carregando}>

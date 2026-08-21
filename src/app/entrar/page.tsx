@@ -26,23 +26,31 @@ function FormularioEntrar() {
     e.preventDefault();
     setErro("");
     setCarregando(true);
-    const resp = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, senha }),
-    });
-    const dados = await resp.json();
-    setCarregando(false);
-    if (!resp.ok) {
-      setErro(dados.erro || "Não foi possível entrar");
-      return;
+    try {
+      const resp = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, senha }),
+      });
+      const dados = await resp.json();
+      if (!resp.ok) {
+        setCarregando(false);
+        setErro(dados.erro || "Não foi possível entrar");
+        return;
+      }
+      // Continua desabilitado até o redirecionamento acontecer de fato —
+      // sem isso, o botão voltava ao normal antes da troca de tela, dando
+      // margem pra um duplo clique achando que nada aconteceu.
+      if (dados.usuario.papel === "DONO") router.push("/admin");
+      else if (dados.usuario.papel === "BARBEIRO") router.push("/barbeiro");
+      // Mesma checagem usada em cadastro/page.tsx — startsWith("/") sozinho
+      // não barra "//evil.com" ou "/\evil.com", que o navegador resolve como
+      // link absoluto fora do site.
+      else router.push(next && /^\/(?!\/|\\)/.test(next) ? next : "/");
+    } catch {
+      setCarregando(false);
+      setErro("Não foi possível conectar. Tente novamente.");
     }
-    if (dados.usuario.papel === "DONO") router.push("/admin");
-    else if (dados.usuario.papel === "BARBEIRO") router.push("/barbeiro");
-    // Mesma checagem usada em cadastro/page.tsx — startsWith("/") sozinho
-    // não barra "//evil.com" ou "/\evil.com", que o navegador resolve como
-    // link absoluto fora do site.
-    else router.push(next && /^\/(?!\/|\\)/.test(next) ? next : "/");
   }
 
   return (
@@ -55,34 +63,42 @@ function FormularioEntrar() {
       >
         Entrar com Google
       </a>
-      <p className="text-xs text-ink/40 text-center mb-6">
+      <p className="text-xs text-ink/60 text-center mb-6">
         (só funciona se você já tem conta — pra criar uma conta nova, use a
         tela de cadastro)
       </p>
 
       <div className="flex items-center gap-3 mb-6">
         <div className="h-px flex-1 bg-line" />
-        <span className="text-xs text-ink/40">ou com e-mail</span>
+        <span className="text-xs text-ink/60">ou com e-mail</span>
         <div className="h-px flex-1 bg-line" />
       </div>
 
       <form onSubmit={entrar} className="space-y-4">
-        <input
-          className="input"
-          type="email"
-          placeholder="E-mail"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          className="input"
-          type="password"
-          placeholder="Senha"
-          value={senha}
-          onChange={(e) => setSenha(e.target.value)}
-          required
-        />
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="email">E-mail</label>
+          <input
+            id="email"
+            className="input"
+            type="email"
+            placeholder="E-mail"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setErro(""); }}
+            required
+          />
+        </div>
+        <div>
+          <label className="text-sm text-ink/60 mb-1 block" htmlFor="senha">Senha</label>
+          <input
+            id="senha"
+            className="input"
+            type="password"
+            placeholder="Senha"
+            value={senha}
+            onChange={(e) => { setSenha(e.target.value); setErro(""); }}
+            required
+          />
+        </div>
         {erro && <p className="text-sm text-red-600">{erro}</p>}
         <button className="btn-primary w-full" disabled={carregando}>
           {carregando ? "Entrando..." : "Entrar"}

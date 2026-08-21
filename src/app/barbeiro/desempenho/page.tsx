@@ -17,10 +17,20 @@ type LinhaBarbeiro = {
   pedidosAceitosNoPeriodo: number;
 };
 
+// Datas calculadas a partir do fuso de Brasília (não do fuso do navegador
+// de quem acessa) — mesmo padrão de src/lib/horarios.ts e de hojeBrasil()
+// em barbeiro/page.tsx. A partir daqui, toda conta de data usa Date.UTC +
+// getters UTC (um "calendário puro"), nunca o fuso local do navegador.
+function hojeBrasilPartes() {
+  const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [ano, mes, dia] = hoje.split("-").map(Number);
+  return { ano, mes, dia };
+}
+
 function formatarData(d: Date) {
-  const ano = d.getFullYear();
-  const mes = String(d.getMonth() + 1).padStart(2, "0");
-  const dia = String(d.getDate()).padStart(2, "0");
+  const ano = d.getUTCFullYear();
+  const mes = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dia = String(d.getUTCDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
 }
 
@@ -38,9 +48,9 @@ function formatarDuracao(minutos: number | null) {
 
 export default function DesempenhoEquipe() {
   const router = useRouter();
-  const hoje = new Date();
-  const [de, setDe] = useState(formatarData(new Date(hoje.getFullYear(), hoje.getMonth(), 1)));
-  const [ate, setAte] = useState(formatarData(hoje));
+  const { ano: anoHoje, mes: mesHoje, dia: diaHoje } = hojeBrasilPartes();
+  const [de, setDe] = useState(formatarData(new Date(Date.UTC(anoHoje, mesHoje - 1, 1))));
+  const [ate, setAte] = useState(formatarData(new Date(Date.UTC(anoHoje, mesHoje - 1, diaHoje))));
   const [mostrarIntervaloLivre, setMostrarIntervaloLivre] = useState(false);
   const [linhas, setLinhas] = useState<LinhaBarbeiro[]>([]);
   const [ehChefeOuDono, setEhChefeOuDono] = useState(true);
@@ -80,22 +90,23 @@ export default function DesempenhoEquipe() {
   useEffect(() => { carregar(); }, []);
 
   function aplicarPreset(preset: "hoje" | "semana" | "mes" | "ano") {
-    const agora = new Date();
+    const { ano, mes, dia } = hojeBrasilPartes();
+    const agora = new Date(Date.UTC(ano, mes - 1, dia));
     let inicio: Date;
     let fim: Date;
     if (preset === "hoje") {
       inicio = fim = agora;
     } else if (preset === "semana") {
       inicio = new Date(agora);
-      inicio.setDate(agora.getDate() - agora.getDay());
+      inicio.setUTCDate(agora.getUTCDate() - agora.getUTCDay());
       fim = new Date(inicio);
-      fim.setDate(inicio.getDate() + 6);
+      fim.setUTCDate(inicio.getUTCDate() + 6);
     } else if (preset === "mes") {
-      inicio = new Date(agora.getFullYear(), agora.getMonth(), 1);
-      fim = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
+      inicio = new Date(Date.UTC(ano, mes - 1, 1));
+      fim = new Date(Date.UTC(ano, mes, 0));
     } else {
-      inicio = new Date(agora.getFullYear(), 0, 1);
-      fim = new Date(agora.getFullYear(), 11, 31);
+      inicio = new Date(Date.UTC(ano, 0, 1));
+      fim = new Date(Date.UTC(ano, 11, 31));
     }
     const deStr = formatarData(inicio);
     const ateStr = formatarData(fim);
@@ -128,10 +139,10 @@ export default function DesempenhoEquipe() {
 
         <div className="card mb-6 space-y-3">
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary text-sm" onClick={() => aplicarPreset("hoje")}>Hoje</button>
-            <button className="btn-secondary text-sm" onClick={() => aplicarPreset("semana")}>Esta semana</button>
-            <button className="btn-secondary text-sm" onClick={() => aplicarPreset("mes")}>Este mês</button>
-            <button className="btn-secondary text-sm" onClick={() => aplicarPreset("ano")}>Este ano</button>
+            <button className="btn-secondary text-sm" disabled={carregando} onClick={() => aplicarPreset("hoje")}>Hoje</button>
+            <button className="btn-secondary text-sm" disabled={carregando} onClick={() => aplicarPreset("semana")}>Esta semana</button>
+            <button className="btn-secondary text-sm" disabled={carregando} onClick={() => aplicarPreset("mes")}>Este mês</button>
+            <button className="btn-secondary text-sm" disabled={carregando} onClick={() => aplicarPreset("ano")}>Este ano</button>
             {!mostrarIntervaloLivre && (
               <button className="btn-secondary text-sm" onClick={() => setMostrarIntervaloLivre(true)}>
                 Adicionar data diferente
@@ -162,6 +173,8 @@ export default function DesempenhoEquipe() {
         </div>
 
         {erro && <p className="text-sm text-red-600 mb-4">{erro}</p>}
+
+        {carregando && linhas.length === 0 && <p className="text-sm text-ink/60">Carregando...</p>}
 
         {!carregando && linhas.length === 0 && !erro && (
           <p className="text-sm text-ink/50">Nenhum dado encontrado.</p>
