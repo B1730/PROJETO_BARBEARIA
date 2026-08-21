@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
 import PainelDisponibilidade, { Disponibilidade } from "@/components/PainelDisponibilidade";
+import PainelCortes, { Servico } from "@/components/PainelCortes";
 
 const ROTULO_STATUS: Record<string, string> = {
   PENDENTE: "Aguardando",
@@ -44,11 +45,6 @@ type Agendamento = {
   concluidoEm: string | null;
   observacoes: string | null;
 };
-type Servico = {
-  id: string; nome: string; precoBase: string; duracaoMinutos: number; imagemUrl: string | null;
-  barbeiros: { barbeiroId: string; preco: string }[];
-};
-
 function nomesCortes(ag: Agendamento) {
   return ag.servicos.map((s) => s.nomeServico).join(" + ");
 }
@@ -443,6 +439,11 @@ export default function PainelBarbeiro() {
         precoBase: Number(novoServicoPreco),
         duracaoMinutos: Number(novoServicoDuracao),
         imagemUrl,
+        // Se eu for chefe, isso me vincula na hora (senão o corte nasceria
+        // aprovado mas sem ninguém vinculado); se eu não for chefe, o
+        // backend ignora isso e me vincula automaticamente do mesmo jeito
+        // — só que como uma solicitação pendente (ver regra de negócio 5).
+        barbeiroIds: meuId ? [meuId] : [],
       }),
     });
     setSalvandoServico(false);
@@ -452,7 +453,7 @@ export default function PainelBarbeiro() {
       return;
     }
     setNovoServicoNome(""); setNovoServicoPreco(""); setNovoServicoDuracao("30"); setNovoServicoImagem(null);
-    setSucesso("Corte cadastrado — só aparece pra você agendar.");
+    setSucesso(ehChefe ? "Corte cadastrado — já aparece pra você agendar." : "Corte enviado — o chefe precisa aprovar antes de aparecer pro cliente.");
     carregarDadosEstaveis();
   }
 
@@ -764,11 +765,14 @@ export default function PainelBarbeiro() {
         </p>
         <div className="space-y-2 mb-4">
           {servicos
-            .filter((s) => s.barbeiros.length === 0 || s.barbeiros.some((b) => b.barbeiroId === meuId))
+            .filter((s) => s.barbeiros.some((b) => b.barbeiroId === meuId))
             .map((s) => {
               const ehMeuExclusivo = s.barbeiros.length === 1 && s.barbeiros[0].barbeiroId === meuId;
               return (
-                <div key={s.id} className="card">
+                <div key={s.id} className={`card ${!s.aprovado ? "border-amber-300" : ""}`}>
+                  {!s.aprovado && (
+                    <p className="text-xs text-amber-700 mb-1">Pendente de aprovação do chefe</p>
+                  )}
                   {editandoServicoId === s.id ? (
                     <div className="grid gap-2">
                       <input className="input" placeholder="Nome do corte" value={editServicoNome} onChange={(e) => setEditServicoNome(e.target.value)} />
@@ -933,6 +937,21 @@ export default function PainelBarbeiro() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="mb-4">
+            <h3 className="font-medium mb-2">Cortes da barbearia</h3>
+            <p className="text-xs text-ink/50 mb-2">
+              Cadastre cortes e escolha quais barbeiros contratados atendem cada um. Solicitações de corte
+              enviadas por um contratado aparecem aqui pra você aprovar.
+            </p>
+            <PainelCortes
+              servicos={servicos}
+              barbeirosElegiveis={equipeBarbeiros.map((b) => ({ id: b.id, nome: b.nome }))}
+              recarregar={carregarDadosEstaveis}
+              onErro={setErro}
+              onSucesso={setSucesso}
+            />
           </div>
 
           <form onSubmit={contratarBarbeiro} className="card grid gap-2">

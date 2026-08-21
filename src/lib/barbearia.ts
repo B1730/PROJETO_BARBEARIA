@@ -16,7 +16,11 @@ export async function buscarBarbeariaPublica(slug: string) {
       nome: true,
       slug: true,
       servicos: {
-        where: { ativo: true },
+        // aprovado: true — exclui solicitações pendentes de um contratado
+        // que o chefe ainda não aprovou; barbeiros: {some: {}} — exclui um
+        // corte aprovado mas ainda sem nenhum barbeiro vinculado (existe,
+        // mas ninguém pode atendê-lo ainda) — ver regra de negócio 5.
+        where: { ativo: true, aprovado: true, barbeiros: { some: {} } },
         select: {
           id: true,
           nome: true,

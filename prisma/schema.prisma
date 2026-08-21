@@ -124,6 +124,13 @@ model Servico {
   ativo         Boolean  @default(true)
   // URL pública da foto no Supabase Storage (bucket "cortes"), opcional.
   imagemUrl     String?
+  // Default true: corte criado por quem tem privilégio de chefe (DONO ou
+  // barbeiro-chefe, ver sessaoTemPrivilegioDeChefe) já nasce aprovado. Só
+  // fica false quando um BARBEIRO contratado comum cria um corte novo —
+  // vira uma solicitação pendente (regra de negócio 5) até o chefe aprovar
+  // via PATCH /api/servicos/[id] com {aprovado:true}. Corte só aparece pro
+  // cliente quando ativo E aprovado (ver src/lib/barbearia.ts).
+  aprovado      Boolean  @default(true)
 
   barbeiros     ServicoBarbeiro[]
   agendamentos  AgendamentoServico[]
@@ -133,6 +140,8 @@ model Servico {
 
 // Tabela de ligação: quais barbeiros fazem qual serviço, e por qual preço
 // (permite cada barbeiro ter um preço próprio pro mesmo corte, se quiser).
+// Desde a regra de negócio 5 (revisada): todo corte precisa de vínculo
+// explícito — não existe mais "lista vazia = barbearia toda atende".
 model ServicoBarbeiro {
   id          String   @id @default(cuid())
   servicoId   String

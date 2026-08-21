@@ -29,10 +29,10 @@ export async function GET(req: NextRequest) {
   // de sequencial. É a rota mais chamada do fluxo público de agendamento
   // (uma vez por cada dia que o cliente clica no calendário).
   const [servicos, barbeiro] = await Promise.all([
-    db.servico.findMany({ where: { id: { in: servicoIds } }, select: { id: true, ativo: true, duracaoMinutos: true, barbeariaId: true } }),
+    db.servico.findMany({ where: { id: { in: servicoIds } }, select: { id: true, ativo: true, aprovado: true, duracaoMinutos: true, barbeariaId: true } }),
     db.usuario.findUnique({ where: { id: barbeiroId }, select: { papel: true, barbeariaId: true, atendeComoBarbeiro: true } }),
   ]);
-  if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo)) {
+  if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo || !s.aprovado)) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
   const barbeariaId = servicos[0].barbeariaId;

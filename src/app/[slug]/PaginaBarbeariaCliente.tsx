@@ -83,9 +83,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   // barbeiro 1 cadastrou cabelo+barba, barbeiro 2 cadastrou sobrancelha e
   // bigode; selecionar um ou outro já filtra a lista de cortes.
   const cortesDoBarbeiro = barbeiroEscolhidoId
-    ? barbearia.servicos.filter(
-        (s) => s.barbeiros.length === 0 || s.barbeiros.some((b) => b.barbeiroId === barbeiroEscolhidoId)
-      )
+    ? barbearia.servicos.filter((s) => s.barbeiros.some((b) => b.barbeiroId === barbeiroEscolhidoId))
     : [];
   const precoTotal = servicosEscolhidos.reduce((soma, s) => soma + Number(s.precoBase), 0);
   const duracaoTotal = servicosEscolhidos.reduce((soma, s) => soma + s.duracaoMinutos, 0);

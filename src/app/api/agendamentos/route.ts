@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } }),
   ]);
 
-  if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo)) {
+  if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo || !s.aprovado)) {
     return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
   }
   // barbeariaId nunca vem do cliente — é sempre derivado dos serviços, pra
@@ -68,17 +68,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "Barbeiro não encontrado" }, { status: 404 });
   }
 
-  // Pra cada corte escolhido: se ele tem preços customizados por barbeiro,
-  // esse barbeiro precisa estar entre eles — senão ele nem oferece esse
-  // corte (mesma regra de sempre, agora conferida em cada um dos cortes
-  // escolhidos, não só num).
+  // Pra cada corte escolhido, esse barbeiro precisa estar entre os
+  // vinculados a ele — desde a revisão da regra de negócio 5, todo corte
+  // exige vínculo explícito (ServicoBarbeiro), não existe mais "sem
+  // vínculo = barbearia toda atende".
   const itens: { servicoId: string; nome: string; preco: Prisma.Decimal; duracaoMinutos: number }[] = [];
   for (const s of servicos) {
     const precoDesseBarbeiro = s.barbeiros.find((b) => b.barbeiroId === barbeiroId);
-    if (s.barbeiros.length > 0 && !precoDesseBarbeiro) {
+    if (!precoDesseBarbeiro) {
       return NextResponse.json({ erro: `Esse barbeiro não realiza o corte "${s.nome}"` }, { status: 400 });
     }
-    itens.push({ servicoId: s.id, nome: s.nome, preco: precoDesseBarbeiro?.preco ?? s.precoBase, duracaoMinutos: s.duracaoMinutos });
+    itens.push({ servicoId: s.id, nome: s.nome, preco: precoDesseBarbeiro.preco, duracaoMinutos: s.duracaoMinutos });
   }
 
   const precoCobrado = itens.reduce((soma, i) => soma + Number(i.preco), 0);
