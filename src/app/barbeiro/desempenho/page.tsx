@@ -41,17 +41,23 @@ export default function DesempenhoEquipe() {
   const hoje = new Date();
   const [de, setDe] = useState(formatarData(new Date(hoje.getFullYear(), hoje.getMonth(), 1)));
   const [ate, setAte] = useState(formatarData(hoje));
-  const [mesEscolhido, setMesEscolhido] = useState("");
+  const [mostrarIntervaloLivre, setMostrarIntervaloLivre] = useState(false);
   const [linhas, setLinhas] = useState<LinhaBarbeiro[]>([]);
   const [ehChefeOuDono, setEhChefeOuDono] = useState(true);
   const [carregando, setCarregando] = useState(true);
   const [semPermissao, setSemPermissao] = useState(false);
   const [erro, setErro] = useState("");
 
-  async function carregar() {
+  // Aceita de/ate explícitos (usado pelos atalhos de período, que senão
+  // dispararia a busca com o "de"/"ate" ainda velho — setDe/setAte são
+  // assíncronos, o valor novo só existiria no próximo render) — sem
+  // parâmetro, usa o que já está nos campos (usado pelo botão "Filtrar").
+  async function carregar(deParam?: string, ateParam?: string) {
+    const deUsado = deParam ?? de;
+    const ateUsado = ateParam ?? ate;
     setCarregando(true);
     setErro("");
-    const resp = await fetch(`/api/relatorio-equipe?de=${de}&ate=${ate}`);
+    const resp = await fetch(`/api/relatorio-equipe?de=${deUsado}&ate=${ateUsado}`);
     setCarregando(false);
     if (resp.status === 401) {
       router.push("/entrar");
@@ -91,22 +97,11 @@ export default function DesempenhoEquipe() {
       inicio = new Date(agora.getFullYear(), 0, 1);
       fim = new Date(agora.getFullYear(), 11, 31);
     }
-    setMesEscolhido("");
-    setDe(formatarData(inicio));
-    setAte(formatarData(fim));
-  }
-
-  // Atalho pra pular direto pra QUALQUER mês (não só o atual, que já é
-  // coberto pelo botão "Este mês") — ex.: escolher janeiro preenche De/Até
-  // com o mês inteiro; dá pra depois esticar "Até" manualmente pra
-  // fevereiro, março etc. e combinar vários meses de uma vez, sem precisar
-  // de nada novo no backend (o intervalo De/Até já é livre).
-  function escolherMes(valor: string) {
-    setMesEscolhido(valor);
-    if (!valor) return;
-    const [ano, mes] = valor.split("-").map(Number);
-    setDe(formatarData(new Date(ano, mes - 1, 1)));
-    setAte(formatarData(new Date(ano, mes, 0)));
+    const deStr = formatarData(inicio);
+    const ateStr = formatarData(fim);
+    setDe(deStr);
+    setAte(ateStr);
+    carregar(deStr, ateStr);
   }
 
   if (semPermissao) {
@@ -137,28 +132,33 @@ export default function DesempenhoEquipe() {
             <button className="btn-secondary text-sm" onClick={() => aplicarPreset("semana")}>Esta semana</button>
             <button className="btn-secondary text-sm" onClick={() => aplicarPreset("mes")}>Este mês</button>
             <button className="btn-secondary text-sm" onClick={() => aplicarPreset("ano")}>Este ano</button>
+            {!mostrarIntervaloLivre && (
+              <button className="btn-secondary text-sm" onClick={() => setMostrarIntervaloLivre(true)}>
+                Adicionar data diferente
+              </button>
+            )}
           </div>
-          <div className="flex flex-wrap gap-2 items-end">
-            <div>
-              <label className="text-xs text-ink/60 block mb-1">De</label>
-              <input type="date" className="input" value={de} onChange={(e) => { setMesEscolhido(""); setDe(e.target.value); }} />
-            </div>
-            <div>
-              <label className="text-xs text-ink/60 block mb-1">Até</label>
-              <input type="date" className="input" value={ate} onChange={(e) => { setMesEscolhido(""); setAte(e.target.value); }} />
-            </div>
-            <div>
-              <label className="text-xs text-ink/60 block mb-1">Ou escolher um mês</label>
-              <input type="month" className="input" value={mesEscolhido} onChange={(e) => escolherMes(e.target.value)} />
-            </div>
-            <button className="btn-primary" disabled={carregando} onClick={carregar}>
-              {carregando ? "Carregando..." : "Filtrar"}
-            </button>
-          </div>
-          <p className="text-xs text-ink/50">
-            "De" e "Até" aceitam qualquer intervalo — um dia só, uma semana específica, ou vários meses juntos
-            (ex.: escolha janeiro em "De" e o fim de fevereiro em "Até" pra ver os dois meses somados).
-          </p>
+          {mostrarIntervaloLivre && (
+            <>
+              <div className="flex flex-wrap gap-2 items-end">
+                <div>
+                  <label className="text-xs text-ink/60 block mb-1">De</label>
+                  <input type="date" className="input" value={de} onChange={(e) => setDe(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-ink/60 block mb-1">Até</label>
+                  <input type="date" className="input" value={ate} onChange={(e) => setAte(e.target.value)} />
+                </div>
+                <button className="btn-primary" disabled={carregando} onClick={() => carregar()}>
+                  {carregando ? "Carregando..." : "Filtrar"}
+                </button>
+              </div>
+              <p className="text-xs text-ink/50">
+                "De" e "Até" aceitam qualquer intervalo — um dia só, uma semana específica, ou vários meses juntos
+                (ex.: escolha o início de janeiro em "De" e o fim de fevereiro em "Até" pra ver os dois meses somados).
+              </p>
+            </>
+          )}
         </div>
 
         {erro && <p className="text-sm text-red-600 mb-4">{erro}</p>}
