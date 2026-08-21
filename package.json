@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
+    "criar-admin": "tsx scripts/criar-admin-plataforma.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

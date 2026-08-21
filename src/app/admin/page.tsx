@@ -7,6 +7,7 @@ import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
 import PainelDisponibilidade, { Disponibilidade } from "@/components/PainelDisponibilidade";
 import PainelCortes, { Servico } from "@/components/PainelCortes";
+import PainelAcessoPlataforma from "@/components/PainelAcessoPlataforma";
 
 type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
@@ -726,6 +727,8 @@ export default function PainelAdmin() {
           </>
         )}
       </section>
+
+      <PainelAcessoPlataforma />
         </>
       )}
       </main>

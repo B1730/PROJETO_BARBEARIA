@@ -12,7 +12,7 @@ const COOKIE_NAME = "sessao";
 
 export type SessaoPayload = {
   usuarioId: string;
-  papel: "CLIENTE" | "BARBEIRO" | "DONO";
+  papel: "CLIENTE" | "BARBEIRO" | "DONO" | "ADMIN";
   barbeariaId: string | null;
 };
 

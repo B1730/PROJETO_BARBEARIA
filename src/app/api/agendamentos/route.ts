@@ -184,8 +184,14 @@ export async function POST(req: NextRequest) {
 // - DONO vê todos da barbearia (ou só de um barbeiro específico, com
 //   ?barbeiroId=)
 // - CLIENTE vê os próprios (histórico)
+// Lista explícita de papéis (nunca exigirSessao() sem argumento) — sem
+// isso, um papel novo que essa rota não sabe tratar (ver ADMIN, regra de
+// negócio 14) cai fora dos três `if` abaixo, `where` fica `{}`, e
+// db.agendamento.findMany devolve TODOS os agendamentos de TODAS as
+// barbearias. ADMIN nunca deve usar esta rota — a visão dele é sempre
+// GET /api/admin/agendamentos, que exige um acesso concedido explícito.
 export async function GET(req: NextRequest) {
-  const sessao = await exigirSessao();
+  const sessao = await exigirSessao(["CLIENTE", "BARBEIRO", "DONO"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const statusFiltro = req.nextUrl.searchParams.get("status");

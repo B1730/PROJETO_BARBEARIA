@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
+import { buscarRelatorioEquipe, calcularJanelaRelatorio } from "@/lib/relatorios";
 
 // GET /api/relatorio-equipe?de=2026-08-01&ate=2026-08-31
 // Chefe/dono (ver sessaoTemPrivilegioDeChefe) vê a barbearia inteira,
 // barbeiro por barbeiro. Um BARBEIRO comum (ou DONO sem privilégio de
 // chefe — não deveria existir na prática, mas por segurança) também pode
 // chamar isso, só que sempre restrito aos PRÓPRIOS números — nunca escolhe
-// outro colega nem vê a barbearia inteira, mesma rota, só o `barbeiros`
+// outro colega nem vê a barbearia inteira, mesma rota, só o `porBarbeiro`
 // abaixo fica com uma linha só. Período é um intervalo livre de datas (não
 // um enum fixo tipo dia/mês/ano do /api/financeiro) — cobre "um dia",
 // "várias semanas", "vários meses" ou "um ano inteiro" com a mesma lógica,
@@ -25,157 +25,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ erro: "Data inválida" }, { status: 400 });
   }
 
-  // Fuso fixo em America/Sao_Paulo, mesmo critério de /api/financeiro e
-  // src/lib/horarios.ts — "de"/"ate" são dias no fuso de Brasília, não UTC.
-  const hojeBrasil = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  const [anoHoje, mesHoje] = hojeBrasil.split("-").map(Number);
-
-  // Só pra comparar dia marcado vs. dia de conclusão (a lista de detalhe
-  // de cortes concluídos, mais abaixo) — nunca usado pra filtrar/gravar.
-  const diaBrasilDe = (d: Date) =>
-    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-
-  const [anoDe, mesDe, diaDe] = deParam ? deParam.split("-").map(Number) : [anoHoje, mesHoje, 1];
-  const [anoAte, mesAte, diaAte] = ateParam ? ateParam.split("-").map(Number) : [anoHoje, mesHoje, new Date(anoHoje, mesHoje, 0).getDate()];
-
-  const inicio = new Date(Date.UTC(anoDe, mesDe - 1, diaDe, 3, 0, 0));
-  // "ate" é inclusivo (o próprio dia inteiro conta) — por isso o limite
-  // real é o início do dia SEGUINTE.
-  const fim = new Date(Date.UTC(anoAte, mesAte - 1, diaAte + 1, 3, 0, 0));
-  if (fim <= inicio) {
+  const janela = calcularJanelaRelatorio(deParam, ateParam);
+  if (!janela) {
     return NextResponse.json({ erro: "O período final precisa ser depois do inicial" }, { status: 400 });
   }
 
   const barbeariaId = sessao.barbeariaId!;
-  // Escopo do relatório: chefe/dono vê todo mundo (ou pode ainda filtrar
-  // por ?barbeiroId= — mantido pra uso futuro, hoje a tela não usa isso
-  // ainda); barbeiro comum só vê a própria linha, ignorando qualquer
-  // ?barbeiroId= que venha na requisição (nunca escala pra outro colega).
-  const whereBarbeiros: any = { barbeariaId, OR: [{ papel: "BARBEIRO" }, { papel: "DONO", atendeComoBarbeiro: true }] };
-  if (!ehChefeOuDono) {
-    whereBarbeiros.id = sessao.usuarioId;
-  }
-
-  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo, porBarbeiroTotal, agendamentosConcluidosDetalhe] =
-    await Promise.all([
-      db.usuario.findMany({ where: whereBarbeiros, select: { id: true, nome: true } }),
-      db.agendamento.groupBy({
-        by: ["barbeiroId"],
-        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
-        _sum: { precoCobrado: true },
-        _count: { _all: true },
-      }),
-      // "Corte mais feito" por barbeiro: um agendamento pode ter vários
-      // cortes (ver AgendamentoServico), então isso não dá mais pra fazer
-      // com groupBy direto em Agendamento — groupBy não agrupa por campo de
-      // relação (barbeiroId mora em Agendamento, não em AgendamentoServico).
-      // Busca as linhas e agrega em memória, mesmo padrão já usado abaixo
-      // pro tempo médio de resposta.
-      db.agendamentoServico.findMany({
-        where: { agendamento: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } } },
-        select: { servicoId: true, nomeServico: true, agendamento: { select: { barbeiroId: true } } },
-      }),
-      // CANCELADO é terminal (nada transiciona a partir dele) — atualizadoEm
-      // reflete de forma confiável o momento do cancelamento em si, então
-      // não precisa de um campo dedicado tipo confirmadoEm pra esse caso.
-      db.agendamento.groupBy({
-        by: ["barbeiroId"],
-        where: { barbeariaId, status: "CANCELADO", atualizadoEm: { gte: inicio, lt: fim } },
-        _count: { _all: true },
-      }),
-      db.agendamento.findMany({
-        where: { barbeariaId, confirmadoEm: { gte: inicio, lt: fim } },
-        select: { barbeiroId: true, criadoEm: true, confirmadoEm: true },
-      }),
-      // Total de agendamentos no período, qualquer status — diferente de
-      // cortesConcluidos (só CONCLUIDO), dá a visão geral de quanto cada
-      // barbeiro recebeu de pedidos no total.
-      db.agendamento.groupBy({
-        by: ["barbeiroId"],
-        where: { barbeariaId, data: { gte: inicio, lt: fim } },
-        _count: { _all: true },
-      }),
-      // Lista individual (não agregada) de cortes concluídos no período,
-      // com data marcada + data de conclusão — usada pra tela mostrar as
-      // duas datas por corte (ver regra de negócio 11).
-      db.agendamento.findMany({
-        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
-        select: { id: true, barbeiroId: true, data: true, concluidoEm: true, servicos: { select: { nomeServico: true } } },
-        orderBy: { data: "desc" },
-      }),
-    ]);
-
-  const faturamentoMap = new Map(
-    porBarbeiroConcluidos.map((r) => [r.barbeiroId, { total: Number(r._sum.precoCobrado ?? 0), quantidade: r._count._all }])
+  const porBarbeiro = await buscarRelatorioEquipe(
+    barbeariaId,
+    janela.inicio,
+    janela.fim,
+    ehChefeOuDono ? undefined : sessao.usuarioId
   );
 
-  const contagemPorBarbeiroServico = new Map<string, Map<string, { nome: string; quantidade: number }>>();
-  for (const item of cortesConcluidos) {
-    const barbeiroId = item.agendamento.barbeiroId;
-    const porServico = contagemPorBarbeiroServico.get(barbeiroId) ?? new Map();
-    const atual = porServico.get(item.servicoId) ?? { nome: item.nomeServico, quantidade: 0 };
-    atual.quantidade += 1;
-    porServico.set(item.servicoId, atual);
-    contagemPorBarbeiroServico.set(barbeiroId, porServico);
-  }
-  const corteMaisFeitoMap = new Map<string, { nome: string; quantidade: number }>();
-  for (const [barbeiroId, porServico] of contagemPorBarbeiroServico) {
-    let melhor: { nome: string; quantidade: number } | null = null;
-    for (const v of porServico.values()) {
-      if (!melhor || v.quantidade > melhor.quantidade) melhor = v;
-    }
-    if (melhor) corteMaisFeitoMap.set(barbeiroId, melhor);
-  }
-
-  const detalheConcluidosMap = new Map<
-    string,
-    { id: string; data: Date; concluidoEm: Date | null; nomesCortes: string; divergente: boolean }[]
-  >();
-  for (const ag of agendamentosConcluidosDetalhe) {
-    const lista = detalheConcluidosMap.get(ag.barbeiroId) ?? [];
-    lista.push({
-      id: ag.id,
-      data: ag.data,
-      concluidoEm: ag.concluidoEm,
-      nomesCortes: ag.servicos.map((s) => s.nomeServico).join(" + "),
-      divergente: !!ag.concluidoEm && diaBrasilDe(ag.concluidoEm) !== diaBrasilDe(ag.data),
-    });
-    detalheConcluidosMap.set(ag.barbeiroId, lista);
-  }
-
-  const canceladosMap = new Map(porBarbeiroCancelados.map((r) => [r.barbeiroId, r._count._all]));
-  const totalMap = new Map(porBarbeiroTotal.map((r) => [r.barbeiroId, r._count._all]));
-
-  const temposPorBarbeiro = new Map<string, number[]>();
-  for (const ag of confirmadosNoPeriodo) {
-    if (!ag.confirmadoEm) continue;
-    const minutos = (ag.confirmadoEm.getTime() - ag.criadoEm.getTime()) / 60000;
-    const lista = temposPorBarbeiro.get(ag.barbeiroId) ?? [];
-    lista.push(minutos);
-    temposPorBarbeiro.set(ag.barbeiroId, lista);
-  }
-
-  const porBarbeiro = barbeiros.map((b) => {
-    const fat = faturamentoMap.get(b.id);
-    const tempos = temposPorBarbeiro.get(b.id) ?? [];
-    return {
-      barbeiroId: b.id,
-      nome: b.nome,
-      faturamentoBruto: fat?.total ?? 0,
-      cortesConcluidos: fat?.quantidade ?? 0,
-      corteMaisFeito: corteMaisFeitoMap.get(b.id) ?? null,
-      cortesCancelados: canceladosMap.get(b.id) ?? 0,
-      totalAgendamentos: totalMap.get(b.id) ?? 0,
-      tempoMedioParaAceitarMinutos: tempos.length > 0 ? tempos.reduce((a, c) => a + c, 0) / tempos.length : null,
-      pedidosAceitosNoPeriodo: tempos.length,
-      cortesConcluidosDetalhe: detalheConcluidosMap.get(b.id) ?? [],
-    };
-  });
-
-  return NextResponse.json({ de: inicio, ate: fim, ehChefeOuDono, porBarbeiro });
+  return NextResponse.json({ de: janela.inicio, ate: janela.fim, ehChefeOuDono, porBarbeiro });
 }

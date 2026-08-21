@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "./db";
 import { pegarSessao, SessaoPayload } from "./auth";
 
@@ -47,4 +47,47 @@ export async function sessaoAtendeComoBarbeiro(sessao: SessaoPayload): Promise<b
   if (sessao.papel !== "DONO") return false;
   const usuario = await db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { atendeComoBarbeiro: true } });
   return usuario?.atendeComoBarbeiro ?? false;
+}
+
+/**
+ * true só se esse ADMIN tem, agora mesmo, um acesso concedido pelo DONO
+ * daquela barbearia específica que ainda não expirou nem foi revogado —
+ * confere expiraEm/revogadoEm direto no banco a cada chamada, nunca em
+ * cache, então revogar ou deixar vencer tem efeito imediato mesmo com o
+ * cookie de sessão do ADMIN ainda válido (ver regra de negócio 14). Toda
+ * rota em src/app/api/admin/* chama isso depois de exigirSessao(["ADMIN"]),
+ * sempre com o barbeariaId vindo explícito da query string — a sessão do
+ * ADMIN nunca carrega um barbeariaId fixo (pode ter acesso a mais de uma
+ * barbearia ao mesmo tempo, diferente de BARBEIRO/DONO).
+ */
+export async function acessoAdminValido(usuarioId: string, barbeariaId: string): Promise<boolean> {
+  const acesso = await db.acessoPlataforma.findFirst({
+    where: { usuarioId, barbeariaId, revogadoEm: null, expiraEm: { gt: new Date() } },
+  });
+  return !!acesso;
+}
+
+/**
+ * Usa no início de toda rota em src/app/api/admin/*:
+ *   const acesso = await exigirAcessoAdmin(req);
+ *   if (acesso instanceof NextResponse) return acesso;
+ *   const { barbeariaId } = acesso;
+ * Junta em um passo só: exigir sessão ADMIN, exigir ?barbeariaId= na
+ * query string (a sessão do ADMIN não carrega barbearia fixa), e conferir
+ * o acesso concedido pra ela — sempre na hora, nunca em cache.
+ */
+export async function exigirAcessoAdmin(
+  req: NextRequest
+): Promise<{ sessao: SessaoPayload; barbeariaId: string } | NextResponse> {
+  const sessao = await exigirSessao(["ADMIN"]);
+  if (sessao instanceof NextResponse) return sessao;
+
+  const barbeariaId = req.nextUrl.searchParams.get("barbeariaId");
+  if (!barbeariaId) {
+    return NextResponse.json({ erro: "Informe a barbearia (barbeariaId)" }, { status: 400 });
+  }
+  if (!(await acessoAdminValido(sessao.usuarioId, barbeariaId))) {
+    return NextResponse.json({ erro: "Sem acesso a essa barbearia (expirado, revogado, ou nunca concedido)" }, { status: 403 });
+  }
+  return { sessao, barbeariaId };
 }
