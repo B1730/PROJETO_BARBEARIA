@@ -9,13 +9,18 @@ const COOKIE_VINCULO = "google_pendente_vinculo";
 
 const schema = z.object({
   token: z.string(),
-  nomeBarbearia: z.string().min(2),
+  // Só um dos dois é obrigatório de verdade, dependendo de identidade.intent
+  // (o token assinado, nunca o que o cliente manda) — DONO precisa de
+  // nomeBarbearia, CLIENTE precisa de whatsapp (regra de negócio 12).
+  nomeBarbearia: z.string().optional(),
+  whatsapp: z.string().optional(),
 });
 
 // POST /api/auth/google/finalizar
-// Último passo do "cadastrar barbearia com Google": recebe o token assinado
-// gerado em /api/auth/google/callback (prova que o e-mail já foi confirmado
-// pelo Google) mais o nome da barbearia, e só então cria a conta.
+// Último passo do cadastro com Google quando falta um dado que o Google não
+// fornece: recebe o token assinado gerado em /api/auth/google/callback
+// (prova que o e-mail já foi confirmado pelo Google, e carrega o intent de
+// forma confiável) mais o campo que faltava, e só então cria a conta.
 export async function POST(req: NextRequest) {
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
@@ -38,23 +43,43 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (identidade.intent === "DONO" && !dados.data.nomeBarbearia) {
+    return NextResponse.json({ erro: "Informe o nome da barbearia" }, { status: 400 });
+  }
+  const whatsapp = dados.data.whatsapp ? dados.data.whatsapp.replace(/\D/g, "") : null;
+  if (identidade.intent === "CLIENTE" && (!whatsapp || whatsapp.length < 8)) {
+    return NextResponse.json({ erro: "Informe seu WhatsApp" }, { status: 400 });
+  }
+
   try {
     // Reconfere dentro da transação: pode ter se cadastrado por outro
-    // caminho enquanto preenchia o nome da barbearia (corrida de e-mail).
+    // caminho enquanto preenchia o campo que faltava (corrida de e-mail).
     const usuario = await db.$transaction(async (tx) => {
       const existente = await tx.usuario.findUnique({ where: { email: identidade.email } });
       if (existente) return existente;
 
-      const barbearia = await tx.barbearia.create({
-        data: { nome: dados.data.nomeBarbearia, slug: gerarSlug(dados.data.nomeBarbearia) },
-      });
+      if (identidade.intent === "DONO") {
+        const barbearia = await tx.barbearia.create({
+          data: { nome: dados.data.nomeBarbearia!, slug: gerarSlug(dados.data.nomeBarbearia!) },
+        });
+        return tx.usuario.create({
+          data: {
+            nome: identidade.nome,
+            email: identidade.email,
+            papel: "DONO",
+            senhaHash: null,
+            barbeariaId: barbearia.id,
+          },
+        });
+      }
+
       return tx.usuario.create({
         data: {
           nome: identidade.nome,
           email: identidade.email,
-          papel: "DONO",
+          papel: "CLIENTE",
           senhaHash: null,
-          barbeariaId: barbearia.id,
+          whatsapp,
         },
       });
     });

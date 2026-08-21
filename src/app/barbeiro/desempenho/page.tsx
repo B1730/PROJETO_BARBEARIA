@@ -235,11 +235,11 @@ export default function DesempenhoEquipe() {
                   <p className="text-xs text-ink/50 mb-2">
                     Cortes concluídos no período — data marcada e data em que foi concluído
                   </p>
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     {l.cortesConcluidosDetalhe.map((c) => (
-                      <div key={c.id} className={`text-xs flex justify-between gap-2 ${c.divergente ? "text-amber-700" : "text-ink/60"}`}>
-                        <span className="truncate">{c.nomesCortes}</span>
-                        <span className="shrink-0">
+                      <div key={c.id} className={`text-xs ${c.divergente ? "text-amber-700" : "text-ink/60"}`}>
+                        <p className={`font-medium ${c.divergente ? "" : "text-ink"}`}>{c.nomesCortes}</p>
+                        <p>
                           agendado {formatarDataHora(c.data)}
                           {c.concluidoEm && (
                             <>
@@ -247,7 +247,7 @@ export default function DesempenhoEquipe() {
                               {c.divergente && " ⚠"}
                             </>
                           )}
-                        </span>
+                        </p>
                       </div>
                     ))}
                   </div>

@@ -20,10 +20,16 @@ export default function Cabecalho() {
   useEffect(() => {
     fetch("/api/auth/sessao")
       .then(async (r) => {
-        if (!r.ok) {
+        // Só 401 de verdade (sessão ausente/inválida) manda pro login — um
+        // erro transitório (500 por soluço de conexão, por exemplo) não
+        // pode deslogar quem tem um cookie perfeitamente válido. Mesmo
+        // padrão já usado em barbeiro/page.tsx, admin/page.tsx e
+        // barbeiro/desempenho/page.tsx (só esse arquivo usava !r.ok).
+        if (r.status === 401) {
           router.push("/entrar");
           return;
         }
+        if (!r.ok) return;
         setSessao(await r.json());
       })
       .catch(() => {});

@@ -11,17 +11,22 @@ import { gerarSlug } from "@/lib/slug";
 // papel: "BARBEIRO" aqui já existiu e permitia entrar em QUALQUER
 // barbearia existente só sabendo o id dela — e esse id é descoberto pela
 // rota pública GET /api/barbearias/[slug]. Ver CLAUDE.md.
-const schema = z.object({
-  nome: z.string().min(2),
-  email: z.string().email(),
-  senha: z.string().min(6),
-  papel: z.enum(["CLIENTE", "DONO"]),
-  nomeBarbearia: z.string().optional(), // obrigatório para DONO
-  // Opcional (cadastro via Google não pede isso) — só usado por CLIENTE,
-  // pra o barbeiro poder entrar em contato se precisar (ver
-  // GET /api/agendamentos).
-  whatsapp: z.string().min(8).optional().or(z.literal("")),
-});
+const schema = z
+  .object({
+    nome: z.string().min(2),
+    email: z.string().email(),
+    senha: z.string().min(6),
+    papel: z.enum(["CLIENTE", "DONO"]),
+    nomeBarbearia: z.string().optional(), // obrigatório para DONO
+    // Obrigatório só pra CLIENTE (decisão do usuário) — pro barbeiro poder
+    // entrar em contato se precisar (ver GET /api/agendamentos). DONO não
+    // precisa disso aqui.
+    whatsapp: z.string().optional(),
+  })
+  .refine((d) => d.papel !== "CLIENTE" || (d.whatsapp && d.whatsapp.replace(/\D/g, "").length >= 8), {
+    message: "Informe seu WhatsApp",
+    path: ["whatsapp"],
+  });
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);

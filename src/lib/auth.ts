@@ -68,8 +68,10 @@ export function encerrarSessao() {
 // mesmo momento (ver google/callback) — sem isso, o token sozinho seria um
 // bearer credential completo bastando vazar a URL (histórico do navegador,
 // log de proxy) pra alguém completar o cadastro no lugar da pessoa dona do
-// e-mail, dentro da janela de 10min.
-export type IdentidadeGooglePendente = { email: string; nome: string; vinculo: string };
+// e-mail, dentro da janela de 10min. "intent" vem sempre do callback (nunca
+// do cliente) — decide, em /api/auth/google/finalizar, se falta o nome da
+// barbearia (DONO) ou o WhatsApp (CLIENTE, ver regra de negócio 12).
+export type IdentidadeGooglePendente = { email: string; nome: string; vinculo: string; intent: "CLIENTE" | "DONO" };
 
 // Usado só no fluxo "cadastrar barbearia com Google": depois que o Google
 // confirma quem é a pessoa mas antes de saber o nome da barbearia, guardamos

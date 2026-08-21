@@ -528,7 +528,7 @@ export default function PainelBarbeiro() {
     <>
       <Cabecalho />
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-10">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-3">
         <h1 className="font-display text-3xl">Painel do barbeiro</h1>
         <Link href="/barbeiro/desempenho" className="btn-secondary text-sm shrink-0">
           Visualizar dados da barbearia

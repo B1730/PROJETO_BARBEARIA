@@ -109,13 +109,14 @@ function FormularioCadastro() {
         </div>
         {papel === "CLIENTE" && (
           <div>
-            <label className="text-sm text-ink/60 mb-1 block" htmlFor="whatsapp">Seu WhatsApp (opcional)</label>
+            <label className="text-sm text-ink/60 mb-1 block" htmlFor="whatsapp">Seu WhatsApp</label>
             <input
               id="whatsapp"
               className="input"
-              placeholder="Seu WhatsApp (opcional, com DDD e país)"
+              placeholder="Seu WhatsApp (com DDD e país)"
               value={whatsapp}
               onChange={(e) => { setWhatsapp(e.target.value); setErro(""); }}
+              required
             />
           </div>
         )}

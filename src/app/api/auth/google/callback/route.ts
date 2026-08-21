@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { criarSessao, criarTokenGooglePendente, normalizarEmail } from "@/lib/auth";
 
@@ -16,10 +15,9 @@ const GOOGLE_JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth
 //   original — evita duplicar conta de quem já tinha se cadastrado antes).
 // - se não existe e veio do modo "entrar" (tela de Entrar), NÃO cria nada —
 //   volta pra /entrar com "Conta não encontrada". Entrar não cadastra.
-// - se não existe e o intent era CLIENTE (veio da tela de Cadastro), cria
-//   como cliente na hora (o Google já dá tudo que precisa: nome e e-mail).
-// - se não existe e o intent era DONO, ainda falta o nome da barbearia — o
-//   Google não fornece isso, então manda pra uma telinha extra
+// - se não existe (CLIENTE ou DONO), ainda falta um dado que o Google não
+//   fornece — WhatsApp pro CLIENTE (regra de negócio 12, obrigatório) ou
+//   nome da barbearia pro DONO — então manda pra uma telinha extra
 //   (/cadastro/finalizar-google) só com esse campo.
 export async function GET(req: NextRequest) {
   const erroRedirect = (motivo: string) =>
@@ -88,46 +86,26 @@ export async function GET(req: NextRequest) {
       return erroRedirect("Conta não encontrada — cadastre-se primeiro");
     }
 
-    if (intent === "DONO") {
-      // "vinculo" amarra o token (que vai numa URL, então pode vazar por
-      // histórico do navegador ou log de proxy) ao navegador que realmente
-      // completou o login com o Google — sem isso, qualquer um que
-      // obtivesse a URL dentro dos 10min conseguiria finalizar o cadastro
-      // no lugar da pessoa dona do e-mail.
-      const vinculo = randomUUID();
-      const tokenPendente = await criarTokenGooglePendente({ email, nome: nome!, vinculo });
-      const resposta = NextResponse.redirect(
-        `${req.nextUrl.origin}/cadastro/finalizar-google?token=${encodeURIComponent(tokenPendente)}`
-      );
-      resposta.cookies.delete(COOKIE_ESTADO);
-      resposta.cookies.set(COOKIE_VINCULO, vinculo, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 60 * 10,
-        path: "/api/auth/google/finalizar",
-      });
-      return resposta;
-    }
-
-    let novoCliente;
-    try {
-      novoCliente = await db.usuario.create({
-        data: { nome: nome!, email, papel: "CLIENTE", senhaHash: null },
-      });
-    } catch (erro) {
-      // Corrida: outra requisição criou a conta desse e-mail entre o
-      // findUnique de cima e esse create (ex.: duplo clique, duas abas).
-      // Loga na conta que já existe em vez de devolver um 500 cru.
-      if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
-        novoCliente = await db.usuario.findUniqueOrThrow({ where: { email } });
-      } else {
-        throw erro;
-      }
-    }
-    await criarSessao({ usuarioId: novoCliente.id, papel: novoCliente.papel, barbeariaId: novoCliente.barbeariaId });
-    const resposta = NextResponse.redirect(`${req.nextUrl.origin}${proximaRota}`);
+    // "vinculo" amarra o token (que vai numa URL, então pode vazar por
+    // histórico do navegador ou log de proxy) ao navegador que realmente
+    // completou o login com o Google — sem isso, qualquer um que obtivesse
+    // a URL dentro dos 10min conseguiria finalizar o cadastro no lugar da
+    // pessoa dona do e-mail. "next" (já validado contra open-redirect na
+    // rota que iniciou o login) vai só na querystring — não é sensível, só
+    // usado pelo front pra saber aonde mandar o CLIENTE depois de finalizar.
+    const vinculo = randomUUID();
+    const tokenPendente = await criarTokenGooglePendente({ email, nome: nome!, vinculo, intent });
+    const resposta = NextResponse.redirect(
+      `${req.nextUrl.origin}/cadastro/finalizar-google?token=${encodeURIComponent(tokenPendente)}&intent=${intent}&next=${encodeURIComponent(proximaRota)}`
+    );
     resposta.cookies.delete(COOKIE_ESTADO);
+    resposta.cookies.set(COOKIE_VINCULO, vinculo, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 10,
+      path: "/api/auth/google/finalizar",
+    });
     return resposta;
   }
 
