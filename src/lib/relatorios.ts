@@ -36,13 +36,29 @@ export function calcularJanelaFinanceiro(periodo: string): { inicio: Date; fim: 
   };
 }
 
+// Um agendamento CONCLUIDO conta no período em que foi DE FATO concluído
+// (concluidoEm), não em que foi originalmente agendado (data) — o dinheiro
+// "aconteceu" na conclusão, não na marcação (ver regra de negócio 4).
+// Fallback pra `data` só quando concluidoEm for nulo (agendamentos
+// CONCLUIDO de antes desse campo existir, ver comentário em
+// Agendamento.concluidoEm no schema) — sem isso, faturamento antigo
+// simplesmente sumiria do relatório em vez de cair num período aproximado.
+function whereConcluidoNoPeriodo(inicio: Date, fim: Date) {
+  return {
+    OR: [
+      { concluidoEm: { gte: inicio, lt: fim } },
+      { concluidoEm: null, data: { gte: inicio, lt: fim } },
+    ],
+  };
+}
+
 export async function buscarFinanceiro(
   barbeariaId: string,
   inicio: Date,
   fim: Date,
   apenasBarbeiroId?: string
 ) {
-  const where: any = { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } };
+  const where: any = { barbeariaId, status: "CONCLUIDO", ...whereConcluidoNoPeriodo(inicio, fim) };
   if (apenasBarbeiroId) where.barbeiroId = apenasBarbeiroId;
 
   const agendamentos = await db.agendamento.findMany({
@@ -108,7 +124,7 @@ export async function buscarRelatorioEquipe(barbeariaId: string, inicio: Date, f
       db.usuario.findMany({ where: whereBarbeiros, select: { id: true, nome: true } }),
       db.agendamento.groupBy({
         by: ["barbeiroId"],
-        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
+        where: { barbeariaId, status: "CONCLUIDO", ...whereConcluidoNoPeriodo(inicio, fim) },
         _sum: { precoCobrado: true },
         _count: { _all: true },
       }),
@@ -119,7 +135,7 @@ export async function buscarRelatorioEquipe(barbeariaId: string, inicio: Date, f
       // AgendamentoServico). Busca as linhas e agrega em memória, mesmo
       // padrão já usado abaixo pro tempo médio de resposta.
       db.agendamentoServico.findMany({
-        where: { agendamento: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } } },
+        where: { agendamento: { barbeariaId, status: "CONCLUIDO", ...whereConcluidoNoPeriodo(inicio, fim) } },
         select: { servicoId: true, nomeServico: true, agendamento: { select: { barbeiroId: true } } },
       }),
       db.agendamento.groupBy({
@@ -137,7 +153,7 @@ export async function buscarRelatorioEquipe(barbeariaId: string, inicio: Date, f
         _count: { _all: true },
       }),
       db.agendamento.findMany({
-        where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
+        where: { barbeariaId, status: "CONCLUIDO", ...whereConcluidoNoPeriodo(inicio, fim) },
         select: { id: true, barbeiroId: true, data: true, concluidoEm: true, servicos: { select: { nomeServico: true } } },
         orderBy: { data: "desc" },
       }),
