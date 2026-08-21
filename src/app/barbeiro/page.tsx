@@ -40,6 +40,7 @@ type Agendamento = {
   precoCobrado: string;
   barbeiro?: { id: string; nome: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
+  ocultoPeloBarbeiro: boolean;
 };
 type Disponibilidade = { id: string; diaDaSemana: number; horaInicio: string; horaFim: string };
 type Servico = {
@@ -91,6 +92,7 @@ export default function PainelBarbeiro() {
   const [cortesAgendados, setCortesAgendados] = useState<Agendamento[]>([]);
   const [cortesConcluidos, setCortesConcluidos] = useState<Agendamento[]>([]);
   const [cortesCancelados, setCortesCancelados] = useState<Agendamento[]>([]);
+  const [mostrandoOcultos, setMostrandoOcultos] = useState(false);
   const [disponibilidades, setDisponibilidades] = useState<Disponibilidade[]>([]);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [financeiro, setFinanceiro] = useState<{ totalGeral: number; totalDeAtendimentos: number } | null>(null);
@@ -158,14 +160,20 @@ export default function PainelBarbeiro() {
   // era refazer trabalho que quase nunca muda (faturamento, em particular,
   // só muda quando um agendamento vira CONCLUIDO, o que hoje não acontece
   // em lugar nenhum do app).
-  async function carregarAgendamentos(mostrarSpinner = true) {
+  // useCallback com mostrandoOcultos na dependência — mesmo motivo do
+  // carregarEquipe logo abaixo: sem isso, a referência usada no polling
+  // (setInterval) ficava congelada no valor de quando o efeito rodou a
+  // primeira vez (sempre false), e o toggle "Mostrar ocultos" parava de
+  // funcionar depois do primeiro poll de 8s.
+  const carregarAgendamentos = useCallback(async (mostrarSpinner = true) => {
     if (mostrarSpinner) setCarregando(true);
+    const sufixoOcultos = mostrandoOcultos ? "&mostrarOcultos=1" : "";
     const [pendResp, hojeResp, confResp, concResp, cancResp] = await Promise.all([
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch(`/api/agendamentos?data=${hojeBrasil()}`),
       fetch("/api/agendamentos?status=CONFIRMADO"),
-      fetch("/api/agendamentos?status=CONCLUIDO"),
-      fetch("/api/agendamentos?status=CANCELADO"),
+      fetch(`/api/agendamentos?status=CONCLUIDO${sufixoOcultos}`),
+      fetch(`/api/agendamentos?status=CANCELADO${sufixoOcultos}`),
     ]);
 
     const respostas = [pendResp, hojeResp, confResp, concResp, cancResp];
@@ -211,7 +219,7 @@ export default function PainelBarbeiro() {
     );
 
     if (mostrarSpinner) setCarregando(false);
-  }
+  }, [mostrandoOcultos]);
 
   // Disponibilidade/serviços/faturamento — só mudam por uma ação do próprio
   // barbeiro nesta tela, que já chama isso de novo depois de salvar. Fora
@@ -233,7 +241,14 @@ export default function PainelBarbeiro() {
     setServicos(serv.servicos || []);
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- só na primeira carga; o toggle "mostrar ocultos" tem o próprio efeito abaixo.
   useEffect(() => { carregarAgendamentos(true); carregarDadosEstaveis(); }, []);
+
+  // Refaz a busca (sem o spinner de página inteira) quando o toggle "Mostrar
+  // ocultos" muda — dispara também na primeira carga, mas como o valor
+  // inicial é sempre false isso só repete o que a linha acima já buscou,
+  // sem custo perceptível.
+  useEffect(() => { carregarAgendamentos(false); }, [mostrandoOcultos, carregarAgendamentos]);
 
   // useCallback com equipePeriodo na dependência — sem isso, a referência
   // dessa função usada dentro do setInterval de polling (mais abaixo)
@@ -314,7 +329,7 @@ export default function PainelBarbeiro() {
       if (ehChefe) carregarEquipe();
     }, INTERVALO_POLLING_MS);
     return () => clearInterval(intervalo);
-  }, [ehChefe, carregarEquipe]);
+  }, [ehChefe, carregarEquipe, carregarAgendamentos]);
 
   async function responder(id: string, status: "CONFIRMADO" | "RECUSADO") {
     setErro("");
@@ -350,6 +365,25 @@ export default function PainelBarbeiro() {
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível concluir esse corte");
+      return;
+    }
+    carregarAgendamentos(false);
+  }
+
+  // Some com um corte concluído/cancelado da própria visão (sem apagar do
+  // banco) — ou desfaz isso quando "Mostrar ocultos" está ligado.
+  async function ocultar(id: string, valor: boolean) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ocultar: valor }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível fazer isso");
       return;
     }
     carregarAgendamentos(false);
@@ -467,7 +501,12 @@ export default function PainelBarbeiro() {
     <>
       <Cabecalho />
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-10">
-      <h1 className="font-display text-3xl">Painel do barbeiro</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="font-display text-3xl">Painel do barbeiro</h1>
+        <Link href="/barbeiro/desempenho" className="btn-secondary text-sm shrink-0">
+          Visualizar dados da barbearia
+        </Link>
+      </div>
       {erro && <p className="text-sm text-red-600">{erro}</p>}
       {sucesso && <p className="text-sm text-green-600">{sucesso}</p>}
 
@@ -538,6 +577,17 @@ export default function PainelBarbeiro() {
         )}
       </section>
 
+      <div className="flex justify-end">
+        <label className="flex items-center gap-2 text-sm text-ink/60">
+          <input
+            type="checkbox"
+            checked={mostrandoOcultos}
+            onChange={(e) => setMostrandoOcultos(e.target.checked)}
+          />
+          Mostrar ocultos
+        </label>
+      </div>
+
       <section>
         <h2 className="font-medium mb-3">Cortes concluídos</h2>
         {cortesConcluidos.length === 0 ? (
@@ -545,12 +595,22 @@ export default function PainelBarbeiro() {
         ) : (
           <div className="space-y-3">
             {cortesConcluidos.map((ag) => (
-              <div key={ag.id} className="card">
-                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
-                <p className="text-sm text-ink/60">
-                  {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-                  {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
-                </p>
+              <div key={ag.id} className={`card flex justify-between items-start ${ag.ocultoPeloBarbeiro ? "opacity-50" : ""}`}>
+                <div>
+                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                  <p className="text-sm text-ink/60">
+                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    {" · "}R$ {Number(ag.precoCobrado).toFixed(2)}
+                  </p>
+                </div>
+                <button
+                  className="text-sm text-ink/40 hover:text-ink shrink-0"
+                  disabled={respondendoId === ag.id}
+                  onClick={() => ocultar(ag.id, !ag.ocultoPeloBarbeiro)}
+                  title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
+                >
+                  {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                </button>
               </div>
             ))}
           </div>
@@ -564,12 +624,22 @@ export default function PainelBarbeiro() {
         ) : (
           <div className="space-y-3">
             {cortesCancelados.map((ag) => (
-              <div key={ag.id} className="card">
-                <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
-                <p className="text-sm text-ink/60">
-                  {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-                </p>
-                <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+              <div key={ag.id} className={`card flex justify-between items-start ${ag.ocultoPeloBarbeiro ? "opacity-50" : ""}`}>
+                <div>
+                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                  <p className="text-sm text-ink/60">
+                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                  </p>
+                  <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+                </div>
+                <button
+                  className="text-sm text-ink/40 hover:text-ink shrink-0"
+                  disabled={respondendoId === ag.id}
+                  onClick={() => ocultar(ag.id, !ag.ocultoPeloBarbeiro)}
+                  title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
+                >
+                  {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                </button>
               </div>
             ))}
           </div>
@@ -711,12 +781,7 @@ export default function PainelBarbeiro() {
 
       {ehChefe && (
         <section>
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="font-medium">Minha equipe</h2>
-            <Link href="/barbeiro/desempenho" className="btn-secondary text-sm">
-              Desempenho da equipe
-            </Link>
-          </div>
+          <h2 className="font-medium mb-3">Minha equipe</h2>
 
           <div className="card mb-4">
             <div className="flex justify-between items-center mb-3">

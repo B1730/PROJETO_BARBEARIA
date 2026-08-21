@@ -9,6 +9,7 @@ type LinhaBarbeiro = {
   barbeiroId: string;
   nome: string;
   faturamentoBruto: number;
+  totalAgendamentos: number;
   cortesConcluidos: number;
   corteMaisFeito: { nome: string; quantidade: number } | null;
   cortesCancelados: number;
@@ -40,7 +41,9 @@ export default function DesempenhoEquipe() {
   const hoje = new Date();
   const [de, setDe] = useState(formatarData(new Date(hoje.getFullYear(), hoje.getMonth(), 1)));
   const [ate, setAte] = useState(formatarData(hoje));
+  const [mesEscolhido, setMesEscolhido] = useState("");
   const [linhas, setLinhas] = useState<LinhaBarbeiro[]>([]);
+  const [ehChefeOuDono, setEhChefeOuDono] = useState(true);
   const [carregando, setCarregando] = useState(true);
   const [semPermissao, setSemPermissao] = useState(false);
   const [erro, setErro] = useState("");
@@ -65,6 +68,7 @@ export default function DesempenhoEquipe() {
     }
     const dados = await resp.json();
     setLinhas(dados.porBarbeiro || []);
+    setEhChefeOuDono(dados.ehChefeOuDono !== false);
   }
 
   useEffect(() => { carregar(); }, []);
@@ -87,8 +91,22 @@ export default function DesempenhoEquipe() {
       inicio = new Date(agora.getFullYear(), 0, 1);
       fim = new Date(agora.getFullYear(), 11, 31);
     }
+    setMesEscolhido("");
     setDe(formatarData(inicio));
     setAte(formatarData(fim));
+  }
+
+  // Atalho pra pular direto pra QUALQUER mês (não só o atual, que já é
+  // coberto pelo botão "Este mês") — ex.: escolher janeiro preenche De/Até
+  // com o mês inteiro; dá pra depois esticar "Até" manualmente pra
+  // fevereiro, março etc. e combinar vários meses de uma vez, sem precisar
+  // de nada novo no backend (o intervalo De/Até já é livre).
+  function escolherMes(valor: string) {
+    setMesEscolhido(valor);
+    if (!valor) return;
+    const [ano, mes] = valor.split("-").map(Number);
+    setDe(formatarData(new Date(ano, mes - 1, 1)));
+    setAte(formatarData(new Date(ano, mes, 0)));
   }
 
   if (semPermissao) {
@@ -96,7 +114,7 @@ export default function DesempenhoEquipe() {
       <>
         <Cabecalho />
         <main className="max-w-2xl mx-auto px-6 py-14">
-          <p className="text-ink/70">Essa área é só para o barbeiro chefe.</p>
+          <p className="text-ink/70">Você precisa estar logado como barbeiro ou dono pra ver isso.</p>
           <Link href="/barbeiro" className="underline text-sm">← Voltar</Link>
         </main>
       </>
@@ -108,7 +126,10 @@ export default function DesempenhoEquipe() {
       <Cabecalho />
       <main className="max-w-2xl mx-auto px-6 py-14">
         <Link href="/barbeiro" className="text-sm text-ink/60 hover:text-ink">← Voltar</Link>
-        <h1 className="font-display text-3xl mt-2 mb-6">Desempenho da equipe</h1>
+        <h1 className="font-display text-3xl mt-2 mb-1">Visualizar dados da barbearia</h1>
+        <p className="text-sm text-ink/50 mb-6">
+          {ehChefeOuDono ? "Dados de todos os barbeiros da equipe." : "Seus próprios dados de atendimento."}
+        </p>
 
         <div className="card mb-6 space-y-3">
           <div className="flex flex-wrap gap-2">
@@ -120,32 +141,41 @@ export default function DesempenhoEquipe() {
           <div className="flex flex-wrap gap-2 items-end">
             <div>
               <label className="text-xs text-ink/60 block mb-1">De</label>
-              <input type="date" className="input" value={de} onChange={(e) => setDe(e.target.value)} />
+              <input type="date" className="input" value={de} onChange={(e) => { setMesEscolhido(""); setDe(e.target.value); }} />
             </div>
             <div>
               <label className="text-xs text-ink/60 block mb-1">Até</label>
-              <input type="date" className="input" value={ate} onChange={(e) => setAte(e.target.value)} />
+              <input type="date" className="input" value={ate} onChange={(e) => { setMesEscolhido(""); setAte(e.target.value); }} />
+            </div>
+            <div>
+              <label className="text-xs text-ink/60 block mb-1">Ou escolher um mês</label>
+              <input type="month" className="input" value={mesEscolhido} onChange={(e) => escolherMes(e.target.value)} />
             </div>
             <button className="btn-primary" disabled={carregando} onClick={carregar}>
               {carregando ? "Carregando..." : "Filtrar"}
             </button>
           </div>
           <p className="text-xs text-ink/50">
-            O período pode ser um dia só, várias semanas, vários meses ou um ano inteiro — é só escolher as datas.
+            "De" e "Até" aceitam qualquer intervalo — um dia só, uma semana específica, ou vários meses juntos
+            (ex.: escolha janeiro em "De" e o fim de fevereiro em "Até" pra ver os dois meses somados).
           </p>
         </div>
 
         {erro && <p className="text-sm text-red-600 mb-4">{erro}</p>}
 
         {!carregando && linhas.length === 0 && !erro && (
-          <p className="text-sm text-ink/50">Nenhum barbeiro encontrado.</p>
+          <p className="text-sm text-ink/50">Nenhum dado encontrado.</p>
         )}
 
         <div className="space-y-3">
           {linhas.map((l) => (
             <div key={l.barbeiroId} className="card">
-              <p className="font-medium mb-3">{l.nome}</p>
+              {ehChefeOuDono && <p className="font-medium mb-3">{l.nome}</p>}
               <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-ink/50">Total de agendamentos</p>
+                  <p className="font-medium">{l.totalAgendamentos}</p>
+                </div>
                 <div>
                   <p className="text-ink/50">Faturamento bruto</p>
                   <p className="font-medium">R$ {l.faturamentoBruto.toFixed(2)}</p>

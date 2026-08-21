@@ -194,6 +194,14 @@ model Agendamento {
   duracaoMinutos Int?
   status        StatusAgendamento @default(PENDENTE)
 
+  // Só o próprio barbeiro (dono desse agendamento) pode marcar isso, e só
+  // quando status é CONCLUIDO/CANCELADO (ver PATCH /api/agendamentos/[id]).
+  // Não apaga nada — só some da listagem padrão dele (GET /api/agendamentos
+  // filtra por isso por padrão; ?mostrarOcultos=1 desfaz o filtro, pra dar
+  // um jeito de reverter). Cliente e outros barbeiros nunca são afetados —
+  // é só a visão de quem ocultou.
+  ocultoPeloBarbeiro Boolean @default(false)
+
   // Pedido de cancelamento feito pelo CLIENTE (ver POST
   // /api/agendamentos/[id]/cancelar) — não muda o status sozinho: o
   // agendamento continua PENDENTE/CONFIRMADO (e continua ocupando o

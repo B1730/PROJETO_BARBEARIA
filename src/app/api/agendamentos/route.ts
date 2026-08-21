@@ -230,6 +230,13 @@ export async function GET(req: NextRequest) {
       lt: new Date(Date.UTC(ano, mes - 1, dia + 1, 3, 0, 0)),
     };
   }
+  // Ocultar é uma marca do lado do barbeiro (ver PATCH /api/agendamentos/[id])
+  // — nunca afeta o que o CLIENTE vê do próprio histórico. ?mostrarOcultos=1
+  // desfaz o filtro, é o "jeito de reverter" (a tela usa isso pra listar e
+  // desocultar de novo).
+  if (sessao.papel !== "CLIENTE" && req.nextUrl.searchParams.get("mostrarOcultos") !== "1") {
+    where.ocultoPeloBarbeiro = false;
+  }
 
   // cliente inclui email/whatsapp pra quem já tem acesso a esse
   // agendamento (barbeiro/dono da barbearia dele) poder entrar em contato

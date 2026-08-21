@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import Cabecalho from "@/components/Cabecalho";
 
 const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -20,6 +21,7 @@ type MeuAgendamento = {
   servicos: { nomeServico: string }[];
   barbeiro?: { id: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
+  ocultoPeloBarbeiro: boolean;
 };
 
 function nomesCortes(ag: MeuAgendamento) {
@@ -90,6 +92,7 @@ export default function PainelAdmin() {
   const [meusAgendados, setMeusAgendados] = useState<MeuAgendamento[]>([]);
   const [meusConcluidos, setMeusConcluidos] = useState<MeuAgendamento[]>([]);
   const [meusCancelados, setMeusCancelados] = useState<MeuAgendamento[]>([]);
+  const [mostrandoOcultos, setMostrandoOcultos] = useState(false);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
   const [meuWhatsapp, setMeuWhatsapp] = useState("");
   const [meuCallmebotApiKey, setMeuCallmebotApiKey] = useState("");
@@ -204,12 +207,13 @@ export default function PainelAdmin() {
   }
 
   async function carregarMinhaAgenda() {
+    const sufixoOcultos = mostrandoOcultos ? "&mostrarOcultos=1" : "";
     const [dispResp, pendResp, confResp, concResp, cancResp] = await Promise.all([
       fetch("/api/disponibilidade"),
       fetch("/api/agendamentos?status=PENDENTE"),
       fetch("/api/agendamentos?status=CONFIRMADO"),
-      fetch("/api/agendamentos?status=CONCLUIDO"),
-      fetch("/api/agendamentos?status=CANCELADO"),
+      fetch(`/api/agendamentos?status=CONCLUIDO${sufixoOcultos}`),
+      fetch(`/api/agendamentos?status=CANCELADO${sufixoOcultos}`),
     ]);
     if (dispResp.ok) setMinhaDisponibilidade((await dispResp.json()).disponibilidades || []);
     if (pendResp.ok && confResp.ok) {
@@ -239,7 +243,7 @@ export default function PainelAdmin() {
   // por barbeiro.id === meuId ficaria comparando com null).
   useEffect(() => {
     if (atendoComoBarbeiro && meuId) carregarMinhaAgenda();
-  }, [atendoComoBarbeiro, meuId]);
+  }, [atendoComoBarbeiro, meuId, mostrandoOcultos]);
 
   async function adicionarMinhaDisponibilidade(e: React.FormEvent) {
     e.preventDefault();
@@ -302,6 +306,25 @@ export default function PainelAdmin() {
     if (!resp.ok) {
       const dados = await resp.json().catch(() => ({}));
       setErro(dados.erro || "Não foi possível concluir esse corte");
+      return;
+    }
+    carregarMinhaAgenda();
+  }
+
+  // Some com um corte concluído/cancelado da própria visão (sem apagar do
+  // banco) — ou desfaz isso quando "Mostrar ocultos" está ligado.
+  async function ocultarMeuCorte(id: string, valor: boolean) {
+    setErro("");
+    setRespondendoId(id);
+    const resp = await fetch(`/api/agendamentos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ocultar: valor }),
+    });
+    setRespondendoId(null);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível fazer isso");
       return;
     }
     carregarMinhaAgenda();
@@ -426,7 +449,12 @@ export default function PainelAdmin() {
     <>
       <Cabecalho />
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-10">
-      <h1 className="font-display text-3xl">Painel da barbearia</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="font-display text-3xl">Painel da barbearia</h1>
+        <Link href="/barbeiro/desempenho" className="btn-secondary text-sm shrink-0">
+          Visualizar dados da barbearia
+        </Link>
+      </div>
       {erro && <p className="text-sm text-red-600">{erro}</p>}
       {sucesso && <p className="text-sm text-green-600">{sucesso}</p>}
 
@@ -631,15 +659,36 @@ export default function PainelAdmin() {
               ))}
             </div>
 
+            <div className="flex justify-end mb-2">
+              <label className="flex items-center gap-2 text-sm text-ink/60">
+                <input
+                  type="checkbox"
+                  checked={mostrandoOcultos}
+                  onChange={(e) => setMostrandoOcultos(e.target.checked)}
+                />
+                Mostrar ocultos
+              </label>
+            </div>
+
             <div className="space-y-3 mb-4">
               <h3 className="text-sm font-medium text-ink/70">Meus cortes concluídos</h3>
               {meusConcluidos.length === 0 && <p className="text-sm text-ink/50">Nenhum corte concluído ainda.</p>}
               {meusConcluidos.map((ag) => (
-                <div key={ag.id} className="card">
-                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
-                  <p className="text-sm text-ink/60">
-                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-                  </p>
+                <div key={ag.id} className={`card flex justify-between items-start ${ag.ocultoPeloBarbeiro ? "opacity-50" : ""}`}>
+                  <div>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                    <p className="text-sm text-ink/60">
+                      {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    </p>
+                  </div>
+                  <button
+                    className="text-sm text-ink/40 hover:text-ink shrink-0"
+                    disabled={respondendoId === ag.id}
+                    onClick={() => ocultarMeuCorte(ag.id, !ag.ocultoPeloBarbeiro)}
+                    title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
+                  >
+                    {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                  </button>
                 </div>
               ))}
             </div>
@@ -648,12 +697,22 @@ export default function PainelAdmin() {
               <h3 className="text-sm font-medium text-ink/70">Meus cortes cancelados</h3>
               {meusCancelados.length === 0 && <p className="text-sm text-ink/50">Nenhum corte cancelado.</p>}
               {meusCancelados.map((ag) => (
-                <div key={ag.id} className="card">
-                  <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
-                  <p className="text-sm text-ink/60">
-                    {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-                  </p>
-                  <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+                <div key={ag.id} className={`card flex justify-between items-start ${ag.ocultoPeloBarbeiro ? "opacity-50" : ""}`}>
+                  <div>
+                    <p className="font-medium">{ag.cliente.nome} — {nomesCortes(ag)}</p>
+                    <p className="text-sm text-ink/60">
+                      {new Date(ag.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                    </p>
+                    <p className="text-sm text-ink/60 mt-1">Motivo: {ag.motivoCancelamento || "não informado"}</p>
+                  </div>
+                  <button
+                    className="text-sm text-ink/40 hover:text-ink shrink-0"
+                    disabled={respondendoId === ag.id}
+                    onClick={() => ocultarMeuCorte(ag.id, !ag.ocultoPeloBarbeiro)}
+                    title={ag.ocultoPeloBarbeiro ? "Desocultar" : "Ocultar da minha visão"}
+                  >
+                    {respondendoId === ag.id ? "..." : ag.ocultoPeloBarbeiro ? "Desocultar" : "✕"}
+                  </button>
                 </div>
               ))}
             </div>

@@ -4,11 +4,13 @@ import { db } from "@/lib/db";
 import { exigirSessao } from "@/lib/exigirSessao";
 import { notificarCancelamentoConfirmado } from "@/lib/whatsapp";
 
-// Ou muda o status, ou recusa um pedido de cancelamento em aberto (mantém o
-// agendamento como estava) — nunca as duas coisas na mesma requisição.
+// Muda o status, recusa um pedido de cancelamento em aberto, ou
+// oculta/desoculta um CONCLUIDO/CANCELADO da própria visão — nunca duas
+// dessas coisas na mesma requisição.
 const schema = z.union([
   z.object({ status: z.enum(["CONFIRMADO", "RECUSADO", "CANCELADO", "CONCLUIDO"]) }),
   z.object({ recusarCancelamento: z.literal(true) }),
+  z.object({ ocultar: z.boolean() }),
 ]);
 
 // De onde cada status pode partir — evita, por ex., reabrir um agendamento
@@ -51,6 +53,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
+
+  if ("ocultar" in dados.data) {
+    if (!["CONCLUIDO", "CANCELADO"].includes(agendamento.status)) {
+      return NextResponse.json({ erro: "Só dá pra ocultar um corte concluído ou cancelado" }, { status: 409 });
+    }
+    const atualizado = await db.agendamento.update({
+      where: { id: params.id },
+      data: { ocultoPeloBarbeiro: dados.data.ocultar },
+    });
+    return NextResponse.json({ agendamento: atualizado });
+  }
 
   if ("recusarCancelamento" in dados.data) {
     if (!agendamento.cancelamentoSolicitadoEm) {

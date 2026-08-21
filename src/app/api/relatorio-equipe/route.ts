@@ -3,19 +3,21 @@ import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
 
 // GET /api/relatorio-equipe?de=2026-08-01&ate=2026-08-31
-// Só o barbeiro chefe (ou o dono, que já tem privilégio equivalente de
-// chefe em todo lugar do app — ver sessaoTemPrivilegioDeChefe) pode ver
-// isso. Período é um intervalo livre de datas (não um enum fixo tipo
-// dia/mês/ano do /api/financeiro) — cobre "um dia", "várias semanas",
-// "vários meses" ou "um ano inteiro" com a mesma lógica, sem precisar de
-// um caminho de código pra cada granularidade. Sem ?de/?ate, cai no mês
-// corrente (mesmo padrão do período "mes" de /api/financeiro).
+// Chefe/dono (ver sessaoTemPrivilegioDeChefe) vê a barbearia inteira,
+// barbeiro por barbeiro. Um BARBEIRO comum (ou DONO sem privilégio de
+// chefe — não deveria existir na prática, mas por segurança) também pode
+// chamar isso, só que sempre restrito aos PRÓPRIOS números — nunca escolhe
+// outro colega nem vê a barbearia inteira, mesma rota, só o `barbeiros`
+// abaixo fica com uma linha só. Período é um intervalo livre de datas (não
+// um enum fixo tipo dia/mês/ano do /api/financeiro) — cobre "um dia",
+// "várias semanas", "vários meses" ou "um ano inteiro" com a mesma lógica,
+// sem precisar de um caminho de código pra cada granularidade. Sem
+// ?de/?ate, cai no mês corrente (mesmo padrão do período "mes" de
+// /api/financeiro).
 export async function GET(req: NextRequest) {
   const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
-  if (!(await sessaoTemPrivilegioDeChefe(sessao))) {
-    return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
-  }
+  const ehChefeOuDono = await sessaoTemPrivilegioDeChefe(sessao);
 
   const deParam = req.nextUrl.searchParams.get("de");
   const ateParam = req.nextUrl.searchParams.get("ate");
@@ -45,14 +47,18 @@ export async function GET(req: NextRequest) {
   }
 
   const barbeariaId = sessao.barbeariaId!;
+  // Escopo do relatório: chefe/dono vê todo mundo (ou pode ainda filtrar
+  // por ?barbeiroId= — mantido pra uso futuro, hoje a tela não usa isso
+  // ainda); barbeiro comum só vê a própria linha, ignorando qualquer
+  // ?barbeiroId= que venha na requisição (nunca escala pra outro colega).
+  const whereBarbeiros: any = { barbeariaId, OR: [{ papel: "BARBEIRO" }, { papel: "DONO", atendeComoBarbeiro: true }] };
+  if (!ehChefeOuDono) {
+    whereBarbeiros.id = sessao.usuarioId;
+  }
 
-  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo] =
+  const [barbeiros, porBarbeiroConcluidos, cortesConcluidos, porBarbeiroCancelados, confirmadosNoPeriodo, porBarbeiroTotal] =
     await Promise.all([
-      // BARBEIRO sempre entra; DONO só se "também atende" (regra de negócio 10).
-      db.usuario.findMany({
-        where: { barbeariaId, OR: [{ papel: "BARBEIRO" }, { papel: "DONO", atendeComoBarbeiro: true }] },
-        select: { id: true, nome: true },
-      }),
+      db.usuario.findMany({ where: whereBarbeiros, select: { id: true, nome: true } }),
       db.agendamento.groupBy({
         by: ["barbeiroId"],
         where: { barbeariaId, status: "CONCLUIDO", data: { gte: inicio, lt: fim } },
@@ -81,6 +87,14 @@ export async function GET(req: NextRequest) {
         where: { barbeariaId, confirmadoEm: { gte: inicio, lt: fim } },
         select: { barbeiroId: true, criadoEm: true, confirmadoEm: true },
       }),
+      // Total de agendamentos no período, qualquer status — diferente de
+      // cortesConcluidos (só CONCLUIDO), dá a visão geral de quanto cada
+      // barbeiro recebeu de pedidos no total.
+      db.agendamento.groupBy({
+        by: ["barbeiroId"],
+        where: { barbeariaId, data: { gte: inicio, lt: fim } },
+        _count: { _all: true },
+      }),
     ]);
 
   const faturamentoMap = new Map(
@@ -106,6 +120,7 @@ export async function GET(req: NextRequest) {
   }
 
   const canceladosMap = new Map(porBarbeiroCancelados.map((r) => [r.barbeiroId, r._count._all]));
+  const totalMap = new Map(porBarbeiroTotal.map((r) => [r.barbeiroId, r._count._all]));
 
   const temposPorBarbeiro = new Map<string, number[]>();
   for (const ag of confirmadosNoPeriodo) {
@@ -126,10 +141,11 @@ export async function GET(req: NextRequest) {
       cortesConcluidos: fat?.quantidade ?? 0,
       corteMaisFeito: corteMaisFeitoMap.get(b.id) ?? null,
       cortesCancelados: canceladosMap.get(b.id) ?? 0,
+      totalAgendamentos: totalMap.get(b.id) ?? 0,
       tempoMedioParaAceitarMinutos: tempos.length > 0 ? tempos.reduce((a, c) => a + c, 0) / tempos.length : null,
       pedidosAceitosNoPeriodo: tempos.length,
     };
   });
 
-  return NextResponse.json({ de: inicio, ate: fim, porBarbeiro });
+  return NextResponse.json({ de: inicio, ate: fim, ehChefeOuDono, porBarbeiro });
 }
