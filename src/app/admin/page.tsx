@@ -75,6 +75,12 @@ export default function PainelAdmin() {
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
   const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
+  const [editandoServicoId, setEditandoServicoId] = useState<string | null>(null);
+  const [editServicoNome, setEditServicoNome] = useState("");
+  const [editServicoPreco, setEditServicoPreco] = useState("");
+  const [editServicoDuracao, setEditServicoDuracao] = useState("30");
+  const [editServicoImagem, setEditServicoImagem] = useState<File | null>(null);
+  const [salvandoEdicaoServico, setSalvandoEdicaoServico] = useState(false);
 
   // "Eu também atendo": o dono pode ativar isso pra cortar cabelo também
   // (ver regra de negócio 10) — quando ativo, ganha a própria agenda
@@ -436,6 +442,57 @@ export default function PainelAdmin() {
     carregarBarbeirosEServicos(false);
   }
 
+  function iniciarEdicaoServico(s: Servico) {
+    setErro("");
+    setSucesso("");
+    setEditandoServicoId(s.id);
+    setEditServicoNome(s.nome);
+    setEditServicoPreco(String(s.precoBase));
+    setEditServicoDuracao(String(s.duracaoMinutos));
+    setEditServicoImagem(null);
+  }
+
+  function cancelarEdicaoServico() {
+    setEditandoServicoId(null);
+  }
+
+  async function salvarEdicaoServico(id: string) {
+    setErro("");
+    setSucesso("");
+    setSalvandoEdicaoServico(true);
+
+    let imagemUrl: string | undefined;
+    if (editServicoImagem) {
+      try {
+        imagemUrl = await enviarImagem(editServicoImagem, "cortes");
+      } catch (erro: any) {
+        setSalvandoEdicaoServico(false);
+        setErro(erro.message || "Não foi possível enviar a imagem");
+        return;
+      }
+    }
+
+    const resp = await fetch(`/api/servicos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nome: editServicoNome,
+        precoBase: Number(editServicoPreco),
+        duracaoMinutos: Number(editServicoDuracao),
+        ...(imagemUrl ? { imagemUrl } : {}),
+      }),
+    });
+    setSalvandoEdicaoServico(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível salvar esse corte");
+      return;
+    }
+    setEditandoServicoId(null);
+    setSucesso("Corte atualizado.");
+    carregarBarbeirosEServicos(false);
+  }
+
   if (carregando) {
     return (
       <>
@@ -519,17 +576,45 @@ export default function PainelAdmin() {
         <h2 className="font-medium mb-3">Cortes e preços</h2>
         <div className="space-y-2 mb-4">
           {servicos.map((s) => (
-            <div key={s.id} className="card flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                {s.imagemUrl && (
-                  <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
-                )}
-                <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
-                <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
-              </div>
+            <div key={s.id} className="card">
+              {editandoServicoId === s.id ? (
+                <div className="grid gap-2">
+                  <input className="input" placeholder="Nome do corte" value={editServicoNome} onChange={(e) => setEditServicoNome(e.target.value)} />
+                  <input className="input" type="number" step="0.01" placeholder="Preço (R$)" value={editServicoPreco} onChange={(e) => setEditServicoPreco(e.target.value)} />
+                  <input className="input" type="number" placeholder="Duração (minutos)" value={editServicoDuracao} onChange={(e) => setEditServicoDuracao(e.target.value)} />
+                  <div>
+                    <label className="text-sm text-ink/60 mb-1 block">Trocar foto (opcional)</label>
+                    <input
+                      className="input"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => setEditServicoImagem(e.target.files?.[0] || null)}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn-primary" disabled={salvandoEdicaoServico} onClick={() => salvarEdicaoServico(s.id)}>
+                      {salvandoEdicaoServico ? "Salvando..." : "Salvar"}
+                    </button>
+                    <button className="btn-secondary" disabled={salvandoEdicaoServico} onClick={cancelarEdicaoServico}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    {s.imagemUrl && (
+                      <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
+                    )}
+                    <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+                    <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoServico(s)}>Editar</button>
+                    <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

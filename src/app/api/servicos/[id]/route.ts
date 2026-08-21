@@ -16,12 +16,20 @@ async function garantirDono(id: string, barbeariaId: string) {
   return servico && servico.barbeariaId === barbeariaId ? servico : null;
 }
 
+// PATCH: mesma regra de permissão do DELETE abaixo — dono edita qualquer
+// corte da barbearia; barbeiro só edita um corte que seja exclusivamente
+// dele (ver garantirDono/ehSoDele).
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const sessao = await exigirSessao(["DONO"]);
+  const sessao = await exigirSessao(["DONO", "BARBEIRO"]);
   if (sessao instanceof NextResponse) return sessao;
 
   const existente = await garantirDono(params.id, sessao.barbeariaId!);
   if (!existente) return NextResponse.json({ erro: "Serviço não encontrado" }, { status: 404 });
+
+  if (sessao.papel === "BARBEIRO") {
+    const ehSoDele = existente.barbeiros.length === 1 && existente.barbeiros[0].barbeiroId === sessao.usuarioId;
+    if (!ehSoDele) return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
+  }
 
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });

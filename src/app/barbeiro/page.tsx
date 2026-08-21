@@ -103,11 +103,24 @@ export default function PainelBarbeiro() {
   const [novaHoraIni, setNovaHoraIni] = useState("09:00");
   const [novaHoraFim, setNovaHoraFim] = useState("18:00");
   const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
+  const [editandoDisponibilidadeId, setEditandoDisponibilidadeId] = useState<string | null>(null);
+  const [editHoraIni, setEditHoraIni] = useState("09:00");
+  const [editHoraFim, setEditHoraFim] = useState("18:00");
+  const [salvandoEdicaoDisponibilidade, setSalvandoEdicaoDisponibilidade] = useState(false);
+  const [diaReplicando, setDiaReplicando] = useState<number | null>(null);
+  const [diasDestinoReplicar, setDiasDestinoReplicar] = useState<Set<number>>(new Set());
+  const [salvandoReplicar, setSalvandoReplicar] = useState(false);
   const [novoServicoNome, setNovoServicoNome] = useState("");
   const [novoServicoPreco, setNovoServicoPreco] = useState("");
   const [novoServicoDuracao, setNovoServicoDuracao] = useState("30");
   const [novoServicoImagem, setNovoServicoImagem] = useState<File | null>(null);
   const [salvandoServico, setSalvandoServico] = useState(false);
+  const [editandoServicoId, setEditandoServicoId] = useState<string | null>(null);
+  const [editServicoNome, setEditServicoNome] = useState("");
+  const [editServicoPreco, setEditServicoPreco] = useState("");
+  const [editServicoDuracao, setEditServicoDuracao] = useState("30");
+  const [editServicoImagem, setEditServicoImagem] = useState<File | null>(null);
+  const [salvandoEdicaoServico, setSalvandoEdicaoServico] = useState(false);
   const [respondendoId, setRespondendoId] = useState<string | null>(null);
   const [detalhesExpandidos, setDetalhesExpandidos] = useState<Set<string>>(new Set());
   function alternarDetalhe(id: string) {
@@ -439,6 +452,76 @@ export default function PainelBarbeiro() {
     carregarDadosEstaveis();
   }
 
+  function iniciarEdicaoDisponibilidade(d: Disponibilidade) {
+    setErro("");
+    setEditandoDisponibilidadeId(d.id);
+    setEditHoraIni(d.horaInicio);
+    setEditHoraFim(d.horaFim);
+  }
+
+  function cancelarEdicaoDisponibilidade() {
+    setEditandoDisponibilidadeId(null);
+  }
+
+  async function salvarEdicaoDisponibilidade(id: string, diaDaSemana: number) {
+    setErro("");
+    setSalvandoEdicaoDisponibilidade(true);
+    const resp = await fetch(`/api/disponibilidade/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diaDaSemana, horaInicio: editHoraIni, horaFim: editHoraFim }),
+    });
+    setSalvandoEdicaoDisponibilidade(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível salvar essa edição");
+      return;
+    }
+    setEditandoDisponibilidadeId(null);
+    carregarDadosEstaveis();
+  }
+
+  function abrirReplicar(dia: number) {
+    setErro("");
+    setSucesso("");
+    setDiaReplicando(diaReplicando === dia ? null : dia);
+    setDiasDestinoReplicar(new Set());
+  }
+
+  function alternarDiaDestino(dia: number) {
+    setDiasDestinoReplicar((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(dia)) novo.delete(dia);
+      else novo.add(dia);
+      return novo;
+    });
+  }
+
+  async function replicarDisponibilidade(diaOrigem: number) {
+    setErro("");
+    setSucesso("");
+    setSalvandoReplicar(true);
+    const resp = await fetch("/api/disponibilidade/replicar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diaOrigem, diasDestino: [...diasDestinoReplicar] }),
+    });
+    setSalvandoReplicar(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível replicar essa disponibilidade");
+      return;
+    }
+    const dados = await resp.json();
+    setSucesso(
+      dados.criadas > 0
+        ? `${dados.criadas} janela(s) adicionada(s).`
+        : "Os dias escolhidos já tinham essas janelas — nada novo pra adicionar."
+    );
+    setDiaReplicando(null);
+    carregarDadosEstaveis();
+  }
+
   async function adicionarServico(e: React.FormEvent) {
     e.preventDefault();
     setErro("");
@@ -485,6 +568,57 @@ export default function PainelBarbeiro() {
       setErro(dados.erro || "Não foi possível excluir esse corte");
       return;
     }
+    carregarDadosEstaveis();
+  }
+
+  function iniciarEdicaoServico(s: Servico) {
+    setErro("");
+    setSucesso("");
+    setEditandoServicoId(s.id);
+    setEditServicoNome(s.nome);
+    setEditServicoPreco(String(s.precoBase));
+    setEditServicoDuracao(String(s.duracaoMinutos));
+    setEditServicoImagem(null);
+  }
+
+  function cancelarEdicaoServico() {
+    setEditandoServicoId(null);
+  }
+
+  async function salvarEdicaoServico(id: string) {
+    setErro("");
+    setSucesso("");
+    setSalvandoEdicaoServico(true);
+
+    let imagemUrl: string | undefined;
+    if (editServicoImagem) {
+      try {
+        imagemUrl = await enviarImagem(editServicoImagem, "cortes");
+      } catch (erro: any) {
+        setSalvandoEdicaoServico(false);
+        setErro(erro.message || "Não foi possível enviar a imagem");
+        return;
+      }
+    }
+
+    const resp = await fetch(`/api/servicos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nome: editServicoNome,
+        precoBase: Number(editServicoPreco),
+        duracaoMinutos: Number(editServicoDuracao),
+        ...(imagemUrl ? { imagemUrl } : {}),
+      }),
+    });
+    setSalvandoEdicaoServico(false);
+    if (!resp.ok) {
+      const dados = await resp.json().catch(() => ({}));
+      setErro(dados.erro || "Não foi possível salvar esse corte");
+      return;
+    }
+    setEditandoServicoId(null);
+    setSucesso("Corte atualizado.");
     carregarDadosEstaveis();
   }
 
@@ -705,11 +839,64 @@ export default function PainelBarbeiro() {
 
       <section>
         <h2 className="font-medium mb-3">Minha disponibilidade</h2>
-        <div className="space-y-2 mb-4">
-          {disponibilidades.map((d) => (
-            <div key={d.id} className="card flex justify-between items-center">
-              <span>{DIAS[d.diaDaSemana]}: {d.horaInicio} às {d.horaFim}</span>
-              <button className="text-sm text-red-600" onClick={() => removerDisponibilidade(d.id)}>Remover</button>
+        <div className="space-y-4 mb-4">
+          {[...new Set(disponibilidades.map((d) => d.diaDaSemana))].sort((a, b) => a - b).length === 0 && (
+            <p className="text-sm text-ink/50">Nenhuma disponibilidade cadastrada ainda.</p>
+          )}
+          {[...new Set(disponibilidades.map((d) => d.diaDaSemana))].sort((a, b) => a - b).map((dia) => (
+            <div key={dia}>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-sm font-medium text-ink/70">{DIAS[dia]}</span>
+                <button className="text-xs underline text-ink/50" onClick={() => abrirReplicar(dia)}>
+                  {diaReplicando === dia ? "Cancelar" : "Replicar pra outros dias"}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {disponibilidades.filter((d) => d.diaDaSemana === dia).map((d) => (
+                  <div key={d.id} className="card">
+                    {editandoDisponibilidadeId === d.id ? (
+                      <div className="flex flex-wrap gap-2 items-end">
+                        <input type="time" step={1800} className="input" value={editHoraIni} onChange={(e) => setEditHoraIni(e.target.value)} />
+                        <input type="time" step={1800} className="input" value={editHoraFim} onChange={(e) => setEditHoraFim(e.target.value)} />
+                        <button className="btn-primary" disabled={salvandoEdicaoDisponibilidade} onClick={() => salvarEdicaoDisponibilidade(d.id, dia)}>
+                          {salvandoEdicaoDisponibilidade ? "Salvando..." : "Salvar"}
+                        </button>
+                        <button className="btn-secondary" disabled={salvandoEdicaoDisponibilidade} onClick={cancelarEdicaoDisponibilidade}>
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between items-center">
+                        <span>{d.horaInicio} às {d.horaFim}</span>
+                        <div className="flex gap-3">
+                          <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoDisponibilidade(d)}>Editar</button>
+                          <button className="text-sm text-red-600" onClick={() => removerDisponibilidade(d.id)}>Remover</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {diaReplicando === dia && (
+                <div className="card mt-2 space-y-2">
+                  <p className="text-xs text-ink/60">Copiar as janelas de {DIAS[dia]} pra quais dias?</p>
+                  <div className="flex flex-wrap gap-3">
+                    {DIAS.map((nomeDia, i) => i !== dia && (
+                      <label key={i} className="flex items-center gap-1 text-sm">
+                        <input type="checkbox" checked={diasDestinoReplicar.has(i)} onChange={() => alternarDiaDestino(i)} />
+                        {nomeDia}
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    className="btn-primary text-sm"
+                    disabled={salvandoReplicar || diasDestinoReplicar.size === 0}
+                    onClick={() => replicarDisponibilidade(dia)}
+                  >
+                    {salvandoReplicar ? "Replicando..." : "Replicar"}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -738,22 +925,55 @@ export default function PainelBarbeiro() {
         <div className="space-y-2 mb-4">
           {servicos
             .filter((s) => s.barbeiros.length === 0 || s.barbeiros.some((b) => b.barbeiroId === meuId))
-            .map((s) => (
-              <div key={s.id} className="card flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  {s.imagemUrl && (
-                    <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
+            .map((s) => {
+              const ehMeuExclusivo = s.barbeiros.length === 1 && s.barbeiros[0].barbeiroId === meuId;
+              return (
+                <div key={s.id} className="card">
+                  {editandoServicoId === s.id ? (
+                    <div className="grid gap-2">
+                      <input className="input" placeholder="Nome do corte" value={editServicoNome} onChange={(e) => setEditServicoNome(e.target.value)} />
+                      <input className="input" type="number" step="0.01" placeholder="Preço (R$)" value={editServicoPreco} onChange={(e) => setEditServicoPreco(e.target.value)} />
+                      <input className="input" type="number" placeholder="Duração (minutos)" value={editServicoDuracao} onChange={(e) => setEditServicoDuracao(e.target.value)} />
+                      <div>
+                        <label className="text-sm text-ink/60 mb-1 block">Trocar foto (opcional)</label>
+                        <input
+                          className="input"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={(e) => setEditServicoImagem(e.target.files?.[0] || null)}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="btn-primary" disabled={salvandoEdicaoServico} onClick={() => salvarEdicaoServico(s.id)}>
+                          {salvandoEdicaoServico ? "Salvando..." : "Salvar"}
+                        </button>
+                        <button className="btn-secondary" disabled={salvandoEdicaoServico} onClick={cancelarEdicaoServico}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        {s.imagemUrl && (
+                          <Image src={s.imagemUrl} alt={s.nome} width={40} height={40} className="h-10 w-10 rounded-md object-cover" />
+                        )}
+                        <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
+                        {ehMeuExclusivo && (
+                          <>
+                            <button className="text-sm text-ink/60 hover:text-ink" onClick={() => iniciarEdicaoServico(s)}>Editar</button>
+                            <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   )}
-                  <span>{s.nome} <span className="text-ink/50 text-sm">({s.duracaoMinutos} min)</span></span>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-medium">R$ {Number(s.precoBase).toFixed(2)}</span>
-                  {s.barbeiros.length === 1 && s.barbeiros[0].barbeiroId === meuId && (
-                    <button className="text-sm text-red-600" onClick={() => removerServico(s.id)}>Excluir</button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
         <form onSubmit={adicionarServico} className="card grid gap-2">
           <input className="input" placeholder="Nome do corte" value={novoServicoNome} onChange={(e) => setNovoServicoNome(e.target.value)} required />
