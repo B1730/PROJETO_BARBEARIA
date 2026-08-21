@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/lib/exigirSessao";
+import { lerTokenAgendamentoConvidado, pegarSessao } from "@/lib/auth";
 import { notificarCancelamentoDireto, notificarSolicitacaoCancelamento } from "@/lib/whatsapp";
 
 const schema = z.object({
   motivo: z.string().trim().max(300).optional(),
+  // Só usado por quem não tem sessão de CLIENTE — o link de acompanhamento
+  // do convidado prova que ele pode mexer NESSE agendamento específico
+  // (regra de negócio 15), sem precisar de login.
+  token: z.string().optional(),
 });
 
 // POST: o CLIENTE dono do agendamento cancela.
@@ -19,8 +23,24 @@ const schema = z.object({
 //   manter). Continua ocupando o horário normalmente enquanto o pedido
 //   está em aberto.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const sessao = await exigirSessao(["CLIENTE"]);
-  if (sessao instanceof NextResponse) return sessao;
+  const dados = schema.safeParse(await req.json().catch(() => ({})));
+  if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
+
+  // Duas formas de provar que pode mexer nesse agendamento: sessão de
+  // CLIENTE dona dele, OU o token do link de acompanhamento (convidado
+  // sem conta, regra de negócio 15) — o token só prova posse desse UM
+  // agendamento, então confere direto o id, nunca um clienteId.
+  const sessao = await pegarSessao();
+  let autorizado = false;
+  if (sessao?.papel === "CLIENTE") {
+    autorizado = true; // confirmado abaixo contra agendamento.clienteId
+  } else if (dados.data.token) {
+    const identidade = await lerTokenAgendamentoConvidado(dados.data.token);
+    autorizado = identidade?.agendamentoId === params.id;
+  }
+  if (!autorizado) {
+    return NextResponse.json({ erro: "Não autenticado" }, { status: 401 });
+  }
 
   const agendamento = await db.agendamento.findUnique({
     where: { id: params.id },
@@ -30,7 +50,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       cliente: { select: { nome: true } },
     },
   });
-  if (!agendamento || agendamento.clienteId !== sessao.usuarioId) {
+  if (!agendamento || (sessao?.papel === "CLIENTE" && agendamento.clienteId !== sessao.usuarioId)) {
     return NextResponse.json({ erro: "Agendamento não encontrado" }, { status: 404 });
   }
 
@@ -40,9 +60,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (agendamento.cancelamentoSolicitadoEm) {
     return NextResponse.json({ erro: "Você já pediu para cancelar esse agendamento" }, { status: 409 });
   }
-
-  const dados = schema.safeParse(await req.json().catch(() => ({})));
-  if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   // Sem quebra de linha na mensagem que vai pro WhatsApp do barbeiro.
   const motivo = dados.data.motivo?.replace(/[\r\n]+/g, " ").trim() || null;
 

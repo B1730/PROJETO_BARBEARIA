@@ -36,7 +36,7 @@ function formatarHora(dataIso: string) {
 
 type Agendamento = {
   id: string; status: string; data: string;
-  cliente: { nome: string; email: string; whatsapp: string | null };
+  cliente: { nome: string; email: string | null; whatsapp: string | null };
   servicos: { nomeServico: string }[];
   precoCobrado: string;
   barbeiro?: { id: string; nome: string };
@@ -60,7 +60,7 @@ function DetalheCliente({ ag, aberto, onToggle }: { ag: Agendamento; aberto: boo
       </button>
       {aberto && (
         <div className="mt-1 p-2 bg-line/30 rounded text-xs space-y-0.5">
-          <p>{ag.cliente.email}</p>
+          {ag.cliente.email && <p>{ag.cliente.email}</p>}
           {ag.cliente.whatsapp ? (
             <a
               className="underline"

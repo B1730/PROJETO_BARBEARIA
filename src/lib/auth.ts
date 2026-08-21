@@ -118,3 +118,31 @@ export async function lerTokenConviteBarbeiro(token: string): Promise<Identidade
     return null;
   }
 }
+
+// "Link de acompanhamento" de um agendamento — pro CLIENTE convidado (sem
+// conta, ver regra de negócio 15) conseguir ver o status e cancelar depois,
+// sem precisar de login. Prova posse só desse UM agendamento (não é um
+// bearer credential geral tipo os tokens acima, que provam uma identidade
+// inteira) — por isso não precisa do mesmo vínculo por cookie que o
+// cadastro com Google usa; o pior caso de vazamento é alguém ver/cancelar
+// esse agendamento específico, não assumir uma conta. Validade generosa
+// (180 dias) porque não existe outro jeito de o cliente reencontrar isso —
+// não há e-mail nem SMS nesse app, o link é a única cópia.
+export type IdentidadeAgendamentoConvidado = { agendamentoId: string };
+
+export async function criarTokenAgendamentoConvidado(identidade: IdentidadeAgendamentoConvidado) {
+  return new SignJWT(identidade)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("180d")
+    .sign(SECRET);
+}
+
+export async function lerTokenAgendamentoConvidado(token: string): Promise<IdentidadeAgendamentoConvidado | null> {
+  try {
+    const { payload } = await jwtVerify(token, SECRET);
+    return payload as unknown as IdentidadeAgendamentoConvidado;
+  } catch {
+    return null;
+  }
+}

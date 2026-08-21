@@ -13,7 +13,7 @@ type Barbeiro = { id: string; nome: string; email: string; ehChefe: boolean };
 type Financeiro = { totalGeral: number; totalDeAtendimentos: number; porBarbeiro: { barbeiroId: string; nome: string; total: number; quantidade: number }[] };
 type MeuAgendamento = {
   id: string; status: string; data: string;
-  cliente: { nome: string; email: string; whatsapp: string | null };
+  cliente: { nome: string; email: string | null; whatsapp: string | null };
   servicos: { nomeServico: string }[];
   barbeiro?: { id: string };
   cancelamentoSolicitadoEm: string | null; motivoCancelamento: string | null;
@@ -40,7 +40,7 @@ function DetalheCliente({ ag, aberto, onToggle }: { ag: MeuAgendamento; aberto: 
       </button>
       {aberto && (
         <div className="mt-1 p-2 bg-line/30 rounded text-xs space-y-0.5">
-          <p>{ag.cliente.email}</p>
+          {ag.cliente.email && <p>{ag.cliente.email}</p>}
           {ag.cliente.whatsapp ? (
             <a
               className="underline"

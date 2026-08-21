@@ -59,10 +59,16 @@ model Barbearia {
 model Usuario {
   id            String        @id @default(cuid())
   nome          String
-  email         String        @unique
-  // Opcional porque conta criada via "Entrar com Google" não tem senha —
-  // ver src/app/api/auth/google/callback/route.ts. Login por e-mail/senha
-  // sempre checa se isso está preenchido antes de comparar.
+  // Nullable só pro CLIENTE "convidado" — agenda com nome+WhatsApp, sem
+  // criar conta (ver regra de negócio 15); identificado depois pelo
+  // WhatsApp normalizado, nunca por e-mail. Todo outro papel sempre tem
+  // e-mail. Único mesmo sendo nullable — Postgres trata cada NULL como
+  // distinto, então vários convidados sem e-mail nunca colidem entre si.
+  email         String?       @unique
+  // Opcional porque conta criada via "Entrar com Google" (ou convidado
+  // sem conta) não tem senha — ver src/app/api/auth/google/callback/route.ts.
+  // Login por e-mail/senha sempre checa se isso está preenchido antes de
+  // comparar.
   senhaHash     String?
   telefone      String?
   papel         PapelUsuario

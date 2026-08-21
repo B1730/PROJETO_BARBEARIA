@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { exigirSessao, sessaoTemPrivilegioDeChefe } from "@/lib/exigirSessao";
 import { buscarAgendamentosOcupados, calcularHorariosLivres, conflitaComOcupados } from "@/lib/horarios";
 import { notificarNovoAgendamento } from "@/lib/whatsapp";
+import { criarTokenAgendamentoConvidado, pegarSessao } from "@/lib/auth";
 
 const schema = z.object({
   barbeiroId: z.string(),
@@ -18,6 +19,10 @@ const schema = z.object({
     .refine((ids) => new Set(ids).size === ids.length, "Corte repetido na lista"),
   data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // "2026-08-20"
   hora: z.string().regex(/^\d{2}:\d{2}$/), // "14:30"
+  // Só usados por quem NÃO está logado (regra de negócio 15) — cliente
+  // "convidado", sem conta. Ignorados quando existe sessão de CLIENTE.
+  nomeCliente: z.string().min(2).optional(),
+  whatsapp: z.string().optional(),
 });
 
 // Usado só pra sinalizar, de dentro da transação abaixo, que o horário foi
@@ -27,14 +32,51 @@ class HorarioIndisponivelError extends Error {}
 // POST: cliente solicita um agendamento (um ou mais cortes de uma vez).
 // Fica como PENDENTE até o barbeiro aceitar ou recusar — ninguém mais
 // consegue pegar o mesmo horário enquanto ele está pendente (ver
-// calcularHorariosLivres).
+// calcularHorariosLivres). Funciona logado (CLIENTE) OU sem conta —
+// nesse caso nomeCliente+whatsapp identificam quem é (regra de negócio 15).
 export async function POST(req: NextRequest) {
-  const sessao = await exigirSessao(["CLIENTE"]);
-  if (sessao instanceof NextResponse) return sessao;
+  const sessaoBruta = await pegarSessao();
+  // Só CLIENTE ou "ninguém" (convidado) podem pedir agendamento — um
+  // BARBEIRO/DONO/ADMIN logado tentando isso é rejeitado, nunca vira
+  // convidado sem querer.
+  if (sessaoBruta && sessaoBruta.papel !== "CLIENTE") {
+    return NextResponse.json({ erro: "Essa conta não é de cliente" }, { status: 403 });
+  }
 
   const dados = schema.safeParse(await req.json().catch(() => null));
   if (!dados.success) return NextResponse.json({ erro: "Dados inválidos" }, { status: 400 });
   const { barbeiroId, servicoIds, data, hora } = dados.data;
+
+  // Resolve quem é o cliente: sessão existente, ou acha/cria um "convidado"
+  // pelo WhatsApp normalizado (mesmo WhatsApp = mesmo cliente por baixo dos
+  // panos, mesmo sem conta — assim um relatório futuro de clientes
+  // inativos consegue agrupar certinho). Feito ANTES da transação de
+  // horário, de propósito — não é uma operação crítica de concorrência
+  // como reservar o horário é, então não precisa competir pelo lock dela.
+  let clienteId: string;
+  if (sessaoBruta) {
+    clienteId = sessaoBruta.usuarioId;
+  } else {
+    const whatsappNormalizado = (dados.data.whatsapp || "").replace(/\D/g, "");
+    if (whatsappNormalizado.length < 8) {
+      return NextResponse.json({ erro: "Informe um WhatsApp válido" }, { status: 400 });
+    }
+    if (!dados.data.nomeCliente) {
+      return NextResponse.json({ erro: "Informe seu nome" }, { status: 400 });
+    }
+    const existente = await db.usuario.findFirst({ where: { papel: "CLIENTE", whatsapp: whatsappNormalizado } });
+    if (existente) {
+      clienteId = existente.id;
+      if (existente.nome !== dados.data.nomeCliente) {
+        await db.usuario.update({ where: { id: existente.id }, data: { nome: dados.data.nomeCliente } });
+      }
+    } else {
+      const novo = await db.usuario.create({
+        data: { nome: dados.data.nomeCliente, whatsapp: whatsappNormalizado, papel: "CLIENTE" },
+      });
+      clienteId = novo.id;
+    }
+  }
 
   // servicos, barbeiro e cliente não dependem um do outro — buscar os três
   // em paralelo. `barbeiros` sem filtro (todos os preços customizados de
@@ -47,7 +89,7 @@ export async function POST(req: NextRequest) {
       where: { id: barbeiroId },
       select: { id: true, nome: true, papel: true, barbeariaId: true, whatsapp: true, callmebotApiKey: true, atendeComoBarbeiro: true },
     }),
-    db.usuario.findUnique({ where: { id: sessao.usuarioId }, select: { nome: true } }),
+    db.usuario.findUnique({ where: { id: clienteId }, select: { nome: true } }),
   ]);
 
   if (servicos.length !== servicoIds.length || servicos.some((s) => !s.ativo || !s.aprovado)) {
@@ -119,7 +161,7 @@ export async function POST(req: NextRequest) {
         const criado = await tx.agendamento.create({
           data: {
             barbeariaId,
-            clienteId: sessao.usuarioId,
+            clienteId,
             barbeiroId,
             data: inicio,
             duracaoMinutos,
@@ -164,12 +206,18 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Link de acompanhamento (regra de negócio 15) — funciona pra qualquer
+  // pedido, logado ou não; quem já tem conta usa "Meus agendamentos"
+  // normalmente, mas ganhar o link também não atrapalha em nada.
+  const tokenAcompanhamento = await criarTokenAgendamentoConvidado({ agendamentoId: agendamento.id });
+
   return NextResponse.json({
     agendamento: { ...agendamento, servicos: itens.map((i) => ({ nomeServico: i.nome, precoServico: i.preco })) },
     // Usado pela tela do cliente pra oferecer um link direto de WhatsApp
     // com o barbeiro escolhido, além da notificação automática que já foi
     // disparada acima.
     barbeiro: { nome: barbeiro.nome, whatsapp: barbeiro.whatsapp },
+    tokenAcompanhamento,
   });
 }
 

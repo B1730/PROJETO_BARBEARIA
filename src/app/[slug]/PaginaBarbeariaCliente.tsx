@@ -26,12 +26,21 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
   const [diaEncerrado, setDiaEncerrado] = useState(false);
   const [horaEscolhida, setHoraEscolhida] = useState<string | null>(null);
   const [meuWhatsapp, setMeuWhatsapp] = useState("");
+  // Só pedido de quem não está logado como CLIENTE — nome+WhatsApp bastam
+  // pra agendar sem conta (regra de negócio 15); logado, o nome já vem da
+  // sessão.
+  const [nomeConvidado, setNomeConvidado] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [mensagemEhErro, setMensagemEhErro] = useState(false);
   const [carregandoHorarios, setCarregandoHorarios] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [saindo, setSaindo] = useState(false);
   const [barbeiroConfirmado, setBarbeiroConfirmado] = useState<{ nome: string; whatsapp: string | null } | null>(null);
+  // Link pra ver/cancelar esse pedido depois sem precisar de conta (regra
+  // de negócio 15) — mostrado junto da mensagem de sucesso.
+  const [linkAcompanhamento, setLinkAcompanhamento] = useState<string | null>(null);
+
+  const ehClienteLogado = sessao?.usuario.papel === "CLIENTE";
 
   useEffect(() => {
     fetch("/api/auth/sessao")
@@ -68,6 +77,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     setMensagem("");
     setMensagemEhErro(false);
     setBarbeiroConfirmado(null);
+    setLinkAcompanhamento(null);
   }
 
   function alternarServico(s: Servico) {
@@ -111,6 +121,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     setMensagem("");
     setMensagemEhErro(false);
     setBarbeiroConfirmado(null);
+    setLinkAcompanhamento(null);
 
     const whatsappLimpo = meuWhatsapp.replace(/\D/g, "");
     if (whatsappLimpo.length < 8) {
@@ -118,16 +129,23 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
       setMensagemEhErro(true);
       return;
     }
+    if (!ehClienteLogado && nomeConvidado.trim().length < 2) {
+      setMensagem("Informe seu nome.");
+      setMensagemEhErro(true);
+      return;
+    }
 
     setEnviando(true);
-    // Salva o WhatsApp no perfil antes de agendar, pra ficar valendo pra
-    // esse (e os próximos) agendamento — GET /api/agendamentos já devolve
-    // isso pro barbeiro junto com o resto dos dados de contato.
-    await fetch("/api/perfil", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ whatsapp: meuWhatsapp }),
-    });
+    if (ehClienteLogado) {
+      // Salva o WhatsApp no perfil antes de agendar, pra ficar valendo pra
+      // esse (e os próximos) agendamento — GET /api/agendamentos já devolve
+      // isso pro barbeiro junto com o resto dos dados de contato.
+      await fetch("/api/perfil", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ whatsapp: meuWhatsapp }),
+      });
+    }
 
     const resp = await fetch("/api/agendamentos", {
       method: "POST",
@@ -137,15 +155,16 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
         servicoIds: servicosEscolhidos.map((s) => s.id),
         data,
         hora: horaEscolhida,
+        // Sem conta, o servidor usa isso pra identificar/criar o cliente
+        // (regra de negócio 15) — logado, é ignorado.
+        ...(ehClienteLogado ? {} : { nomeCliente: nomeConvidado, whatsapp: meuWhatsapp }),
       }),
     });
     const dados = await resp.json();
     setEnviando(false);
     if (!resp.ok) {
       setMensagemEhErro(true);
-      if (resp.status === 401) {
-        setMensagem("Você precisa criar uma conta ou entrar antes de agendar.");
-      } else if (resp.status === 403) {
+      if (resp.status === 403) {
         setMensagem(
           "Essa conta é de dono ou barbeiro, não de cliente. Saia e entre (ou crie uma conta) com um e-mail de cliente pra agendar."
         );
@@ -156,6 +175,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
     }
     setMensagem("Pedido enviado! O barbeiro vai confirmar em breve.");
     if (dados.barbeiro) setBarbeiroConfirmado(dados.barbeiro);
+    if (dados.tokenAcompanhamento) setLinkAcompanhamento(`/acompanhar/${dados.tokenAcompanhamento}`);
     // Esconde o cartão "Confirmar/Solicitar agendamento" (evita reenvio
     // acidental) — a mensagem de sucesso continua visível por conta própria,
     // sem depender de horaEscolhida (ver seção separada abaixo).
@@ -325,6 +345,21 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
               Confirmar <strong>{servicosEscolhidos.map((s) => s.nome).join(" + ")}</strong> (R$ {precoTotal.toFixed(2)})
               em <strong>{data}</strong> às <strong>{horaEscolhida}</strong>?
             </p>
+            {!ehClienteLogado && (
+              <>
+                <label className="block text-sm text-ink/70 mb-1" htmlFor="nomeConvidado">
+                  Seu nome
+                </label>
+                <input
+                  id="nomeConvidado"
+                  className="input mb-3"
+                  placeholder="Seu nome completo"
+                  value={nomeConvidado}
+                  onChange={(e) => { setNomeConvidado(e.target.value); limparResultadoAnterior(); }}
+                  required
+                />
+              </>
+            )}
             <label className="block text-sm text-ink/70 mb-1" htmlFor="meuWhatsapp">
               Seu WhatsApp (com DDD e país) — pra o barbeiro entrar em contato se precisar
             </label>
@@ -336,6 +371,14 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
               onChange={(e) => { setMeuWhatsapp(e.target.value); limparResultadoAnterior(); }}
               required
             />
+            {!ehClienteLogado && (
+              <p className="text-xs text-ink/50 mb-3">
+                Não precisa criar conta pra agendar — só nome e WhatsApp. Se preferir acompanhar tudo depois em "Meus
+                agendamentos", dá pra{" "}
+                <a className="underline" href={`/entrar?next=/${slug}`}>entrar</a> ou{" "}
+                <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>criar conta</a> antes.
+              </p>
+            )}
             <button type="submit" className="btn-primary" disabled={enviando}>
               {enviando ? "Enviando..." : "Solicitar agendamento"}
             </button>
@@ -347,7 +390,7 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
         <section className="card">
           <p className={`text-sm ${mensagemEhErro ? "text-red-600" : "text-green-700"}`}>
             {mensagem}{" "}
-            {mensagem.includes("conta") && (
+            {mensagemEhErro && mensagem.includes("conta") && (
               <>
                 <a className="underline" href={`/entrar?next=/${slug}`}>Entrar</a> ou{" "}
                 <a className="underline" href={`/cadastro?papel=CLIENTE&next=/${slug}`}>criar conta</a>
@@ -363,6 +406,14 @@ export default function PaginaBarbeariaCliente({ barbearia, slug }: { barbearia:
             >
               Falar no WhatsApp com {barbeiroConfirmado.nome}
             </a>
+          )}
+          {linkAcompanhamento && (
+            <p className="text-sm text-ink/70 mt-3">
+              Guarde esse link pra ver o status ou cancelar depois, sem precisar de conta:{" "}
+              <a className="underline break-all" href={linkAcompanhamento}>
+                {typeof window !== "undefined" ? `${window.location.origin}${linkAcompanhamento}` : linkAcompanhamento}
+              </a>
+            </p>
           )}
         </section>
       )}
